@@ -1,0 +1,91 @@
+name: Build
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      # Everything except prose. THIRD-PARTY-NOTICES.md is carved back in
+      # because the validate-notices step below exists to catch a change to it,
+      # and a plain '**.md' ignore meant that change was the one push the whole
+      # workflow skipped.
+      - '**'
+      - '!**.md'
+      - '!docs/**'
+      - '!LICENSE'
+      - 'THIRD-PARTY-NOTICES.md'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**'
+      - '!**.md'
+      - '!docs/**'
+      - '!LICENSE'
+      - 'THIRD-PARTY-NOTICES.md'
+
+# This workflow only reads the tree. Without a block the job's GITHUB_TOKEN
+# takes the repository default, which is read-write on any repo that has not
+# been switched to the restricted default, and it runs on every push to every
+# branch with a recursive submodule checkout.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and Validate
+    runs-on: windows-latest
+    if: ${{ !startsWith(github.event.head_commit.message, 'Release v') }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          submodules: recursive
+          # Nothing in this job pushes, and the steps below run PowerShell out
+          # of the repo and out of the submodule. Left at the default, checkout
+          # writes the job's GITHUB_TOKEN into .git/config as a basic-auth
+          # header, where any of those scripts can read it back out and use it
+          # against the API for the remainder of the job.
+          persist-credentials: false
+
+      - name: Setup Visual Studio environment
+        uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3.0.0
+
+      # run-install: false - this workspace has zero conda dependencies (pixi is
+      # a task runner only; CMake and MSVC come from the runner image).
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11 # v0.9.6
+        with:
+          run-install: false
+
+      # Build, test and package through the SAME commands a developer runs
+      # locally. All build logic lives in the pixi task chain (setup ->
+      # build-release -> test / package); the workflow owns none, so local and
+      # CI can't drift.
+      # The shipped .asi and the vendored loader carry five separately-licensed
+      # components between them, and a loader bump moves that set without
+      # touching THIRD-PARTY-NOTICES.md. Offline, and it reads only what is
+      # committed, so it runs before anything is built.
+      - name: Validate third-party notices
+        shell: pwsh
+        run: |
+          pixi run validate-notices
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::'pixi run validate-notices' failed"; exit 1 }
+
+      - name: Test
+        shell: pwsh
+        run: |
+          pixi run test
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::'pixi run test' failed"; exit 1 }
+
+      - name: Build and package
+        shell: pwsh
+        run: |
+          pixi run package
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::'pixi run package' failed"; exit 1 }
+
+      - name: Verify installer was produced
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem release/*-installer.zip -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $installer) { Write-Host "::error::No release/*-installer.zip found after 'pixi run package'"; exit 1 }
+          Write-Host "Installer: $($installer.Name) ($([math]::Round($installer.Length / 1KB, 2)) KB)"

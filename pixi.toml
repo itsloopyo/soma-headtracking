@@ -1,0 +1,78 @@
+[workspace]
+name = "soma-head-tracking"
+version = "0.0.0"
+description = "Head tracking mod for SOMA (HPL3) using the CameraUnlock shared library"
+license = "MIT"
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tasks]
+# Fetch cameraunlock-core on a fresh clone AND fast-forward it to origin/main.
+# Deliberate dev action with a commit attached - nothing depends on it, and
+# release.ps1's clean-tree precondition catches a stray bump before a tag.
+sync = "git submodule update --init --remote cameraunlock-core"
+
+# SOMA is a 64-bit HPL3 game - build x64.
+# No -G: let CMake auto-detect the installed Visual Studio generator. Pinning
+# "Visual Studio 17 2022" broke on CI once the windows runner image moved to
+# VS 2026 (VS 17 absent); auto-detect picks whatever VS the machine has.
+setup = { cmd = """
+    powershell -Command "if (-not (Test-Path 'build')) { cmake -B build -A x64 } else { Write-Host 'Build directory exists, skipping setup' -ForegroundColor Yellow }"
+""" }
+
+build = { cmd = "cmake --build build --config Debug", depends-on = ["setup"] }
+build-release = { cmd = "cmake --build build --config Release", depends-on = ["setup"] }
+
+# The mod's own tests: the header-only surfaces (crosshair projection, view
+# basis, field of view) plus a strict compile of every header in one TU. No game
+# needed, so this runs anywhere the project configures.
+#
+# Release, not Debug, for two reasons: it is the configuration that ships, and
+# `package` already builds it, so CI compiles once rather than twice.
+test = { cmd = "ctest --test-dir build -C Release --output-on-failure", depends-on = ["build-release"] }
+
+# bin/ as well as build/. CMake writes the .asi to ${CMAKE_SOURCE_DIR}/bin,
+# outside the CMake binary dir, so wiping build/ alone leaves the previous
+# version's shipped artifact sitting where package-release.ps1 reads from.
+clean = { cmd = """
+    powershell -Command "if (Test-Path 'build') { Remove-Item 'build' -Recurse -Force }; if (Test-Path 'bin') { Remove-Item 'bin' -Recurse -Force }; Write-Host 'Build artifacts cleaned' -ForegroundColor Green"
+""" }
+
+clean-all = { cmd = """
+    powershell -Command "if (Test-Path 'build') { Remove-Item 'build' -Recurse -Force }; if (Test-Path 'bin') { Remove-Item 'bin' -Recurse -Force }; if (Test-Path 'release') { Remove-Item 'release' -Recurse -Force }; Write-Host 'All build artifacts cleaned' -ForegroundColor Green"
+""" }
+
+# Bump vendored Ultimate ASI Loader to latest upstream within the pinned range.
+# Manual; commit the diff. No build task depends on this and CI never runs it.
+update-deps = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/update-deps.ps1" }
+
+# Package release ZIP.
+package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build-release"] }
+
+# Every substantive line of each shipped dependency's licence must appear in
+# THIRD-PARTY-NOTICES.md. Offline - reads only what is committed.
+validate-notices = "node cameraunlock-core/scripts/validate-notices.mjs ."
+
+# A stub, and it says so rather than passing quietly: this mod ships no
+# launcher-manifest.json because the launcher does not list it. When one is
+# added, this becomes `node cameraunlock-core/scripts/validate-manifest.mjs
+# release/SomaHeadTracking-v<version>-installer.zip`.
+validate-manifest = { cmd = """
+    powershell -Command "Write-Host 'No launcher-manifest.json in this repo - nothing to validate.' -ForegroundColor Yellow"
+""" }
+
+# Cut a release: pixi run release <major|minor|patch|nightly|X.Y.Z>.
+release = "powershell -ExecutionPolicy Bypass -File scripts/release.ps1"
+
+# Rolling dev pre-release. `pixi run release nightly` dispatches to this same
+# script; this is the direct entry point the fleet tooling expects.
+release-nightly = "powershell -ExecutionPolicy Bypass -File scripts/release-nightly.ps1"
+
+# Dev-tree deploy. scripts/install.cmd is the release-ZIP installer and reads
+# its payload from a sibling shared/ folder that only exists in the packaged
+# ZIP, so it cannot run from the repo.
+install = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 Release", depends-on = ["build-release"] }
+uninstall = "scripts\\uninstall.cmd /y"
+
+[dependencies]
+# No pixi dependencies - uses system CMake + Visual Studio

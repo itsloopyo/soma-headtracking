@@ -1,0 +1,79 @@
+# Build output
+build/
+bin/
+obj/
+out/
+dist/
+release/
+x64/
+Debug/
+Release/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# Compiled binaries (vendored loaders are re-included below)
+*.dll
+*.asi
+*.exe
+*.pdb
+*.lib
+*.exp
+*.ilk
+!vendor/**/*.dll
+!vendor/**/*.asi
+!vendor/**/*.exe
+
+# Game DLLs referenced at build time (never committed).
+# UnityStubs.cs is checked-in source - CI builds against it.
+**/libs/*
+!**/libs/UnityStubs.cs
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.vcxproj.user
+
+# Pixi
+.pixi/
+
+# Install-time state file (written to the game dir, never tracked)
+.headtracking-state.json
+
+# Agent / AI tooling - machine-generated or local, never commit.
+.claude/
+.lab/
+skills/
+.skills/
+AGENTS.md
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.local.md
+GEMINI.md
+.cursor/
+.cursorrules
+.aider*
+.mcp/
+.mcp.json
+mcp.json
+.serena/
+.codex/
+
+# Store copy, pasted into Nexus by hand
+NEXUS_MODS.md
+
+# Logs
+*.log
+
+# Reverse engineering scratch - bulky, not deliverable, reads badly out of context.
+scratch/
+ghidra*/
+*.gpr
+*.rep/
+*.gzf
+*.dmp
