@@ -18,6 +18,13 @@ An unofficial head tracking mod for SOMA that moves the view with your head whil
 
 ## Installation
 
+### Lopari
+
+Download [Lopari](https://lopari.app), choose **SOMA**, and click
+**Play with head tracking**.
+
+### Standalone Installer
+
 1. Download `SomaHeadTracking-v<version>-installer.zip` from the [Releases page](https://github.com/itsloopyo/soma-headtracking/releases).
 2. Extract it anywhere.
 3. Double-click `install.cmd`.
