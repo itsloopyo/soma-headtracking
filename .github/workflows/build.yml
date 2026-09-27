@@ -71,13 +71,8 @@ jobs:
           pixi run validate-notices
           if ($LASTEXITCODE -ne 0) { Write-Host "::error::'pixi run validate-notices' failed"; exit 1 }
 
-      - name: Test
-        shell: pwsh
-        run: |
-          pixi run test
-          if ($LASTEXITCODE -ne 0) { Write-Host "::error::'pixi run test' failed"; exit 1 }
-
-      - name: Build and package
+      # package depends on test, so this runs the tests too.
+      - name: Test, build and package
         shell: pwsh
         run: |
           pixi run package
