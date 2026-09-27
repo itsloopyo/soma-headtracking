@@ -30,6 +30,7 @@ set(MOD_SOURCES
     src/main.cpp
     src/mod.cpp
     src/config.cpp
+    src/legacy_config/legacy_config.cpp
     src/camera_hook.cpp
     src/crosshair_hook.cpp
     src/eye_tracking.cpp

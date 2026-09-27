@@ -25,12 +25,14 @@ build = { cmd = "cmake --build build --config Debug", depends-on = ["setup"] }
 build-release = { cmd = "cmake --build build --config Release", depends-on = ["setup"] }
 
 # The mod's own tests: the header-only surfaces (crosshair projection, view
-# basis, field of view) plus a strict compile of every header in one TU. No game
-# needed, so this runs anywhere the project configures.
+# basis, field of view), a strict compile of every header in one TU, and the
+# config differential test, after scripts/run-tests.ps1 has checked the hashes
+# of every file the differential test compiles. No game needed, so this runs
+# anywhere the project configures.
 #
 # Release, not Debug, for two reasons: it is the configuration that ships, and
 # `package` already builds it, so CI compiles once rather than twice.
-test = { cmd = "ctest --test-dir build -C Release --output-on-failure", depends-on = ["build-release"] }
+test = { cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tests.ps1", depends-on = ["build-release"] }
 
 # bin/ as well as build/. CMake writes the .asi to ${CMAKE_SOURCE_DIR}/bin,
 # outside the CMake binary dir, so wiping build/ alone leaves the previous
@@ -48,7 +50,7 @@ clean-all = { cmd = """
 update-deps = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/update-deps.ps1" }
 
 # Package release ZIP.
-package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build-release"] }
+package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build-release", "test"] }
 
 # Every substantive line of each shipped dependency's licence must appear in
 # THIRD-PARTY-NOTICES.md. Offline - reads only what is committed.

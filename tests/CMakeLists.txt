@@ -16,6 +16,7 @@ add_executable(soma_headtracking_tests
     reticle_litmus_tests.cpp
     tracking_settings_tests.cpp
     ../src/config.cpp
+    ../src/legacy_config/legacy_config.cpp
     # For kKnownProfiles. build_profile_tests.cpp reads the registry's shape;
     # MatchRunningBuild itself needs a running SOMA and is not called.
     ../src/steam_offsets.cpp
@@ -35,7 +36,8 @@ add_test(NAME soma_headtracking_tests COMMAND soma_headtracking_tests)
 # unit gets the same treatment. /WX is carried here rather than on the mod
 # target, so a future compiler's new warning cannot fail a user's build of the
 # .asi.
-add_library(soma_headtracking_headers_strict OBJECT headers_strict.cpp ../src/config.cpp)
+add_library(soma_headtracking_headers_strict OBJECT headers_strict.cpp ../src/config.cpp
+    ../src/legacy_config/legacy_config.cpp)
 target_include_directories(soma_headtracking_headers_strict PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
 )
@@ -45,3 +47,50 @@ if(MSVC)
 else()
     target_compile_options(soma_headtracking_headers_strict PRIVATE -Wall -Wextra -Werror)
 endif()
+
+# The config differential test. The oracle is the dev pre-release's reader with the core sources
+# it compiled, copied verbatim into config_differential/oracle, and that build's hotkey
+# registration over the chord guards of its pin. It is two libraries, each renaming the namespaces
+# its own way, so neither collides with the other or with the current core.
+set(SOMA_DIFF_DIR ${CMAKE_CURRENT_SOURCE_DIR}/config_differential)
+set(SOMA_ORACLE_DIR ${SOMA_DIFF_DIR}/oracle)
+add_library(soma_config_oracle STATIC
+    ${SOMA_ORACLE_DIR}/src/config.cpp
+    ${SOMA_ORACLE_DIR}/core/src/config/ini_reader.cpp
+    ${SOMA_ORACLE_DIR}/core/src/config/value_guards.cpp
+    ${SOMA_ORACLE_DIR}/core/src/logging/file_log.cpp
+    ${SOMA_DIFF_DIR}/oracle_config_adapter.cpp
+)
+target_include_directories(soma_config_oracle PRIVATE
+    ${SOMA_ORACLE_DIR}/src
+    ${SOMA_ORACLE_DIR}/core/include
+    ${SOMA_DIFF_DIR})
+target_compile_definitions(soma_config_oracle PRIVATE
+    cameraunlock=soma_oracle_core
+    SomaHT=soma_oracle)
+
+add_library(soma_hotkeys_oracle STATIC
+    ${SOMA_DIFF_DIR}/oracle_hotkeys_adapter.cpp
+)
+target_include_directories(soma_hotkeys_oracle PRIVATE
+    ${SOMA_DIFF_DIR}/oracle_fake
+    ${SOMA_ORACLE_DIR}/core/include
+    ${SOMA_DIFF_DIR})
+target_compile_definitions(soma_hotkeys_oracle PRIVATE
+    cameraunlock=soma_oracle_hk_core)
+
+add_executable(config_differential_tests
+    ${SOMA_DIFF_DIR}/differential_tests.cpp
+    ../src/legacy_config/legacy_config.cpp
+)
+target_include_directories(config_differential_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${SOMA_DIFF_DIR})
+target_compile_definitions(config_differential_tests PRIVATE
+    SOMA_DIFFERENTIAL_DATA="${SOMA_DIFF_DIR}/data")
+target_link_libraries(config_differential_tests PRIVATE
+    cameraunlock soma_config_oracle soma_hotkeys_oracle)
+if(MSVC)
+    target_compile_options(config_differential_tests PRIVATE /W4 /permissive-)
+endif()
+add_test(NAME config_differential_tests COMMAND config_differential_tests)
