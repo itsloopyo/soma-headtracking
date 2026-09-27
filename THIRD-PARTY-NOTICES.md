@@ -59,7 +59,7 @@ SOFTWARE.
 
 ## cameraunlock-core
 
-- **Version:** commit `bd22895bb30ab7946d780b0af5782755e33e2cba`
+- **Version:** commit `33f3199499f1bbb0966634a54581b511844f2b15`
 - **License:** MIT
 - **Upstream:** https://github.com/itsloopyo/cameraunlock-core
 - **Usage:** The shared tracking pipeline - OpenTrack receiver, pose
