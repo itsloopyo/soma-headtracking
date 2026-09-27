@@ -11,7 +11,6 @@ int RunHeadTrackingTests();
 int RunReticleLitmusTests();
 int RunCameraFovTests();
 int RunCameraPoseTests();
-int RunConfigTests();
 int RunInjectionWindowTests();
 int RunTrackingSettingsTests();
 
@@ -27,7 +26,6 @@ int main() {
     failures += RunReticleLitmusTests();
     failures += RunCameraFovTests();
     failures += RunCameraPoseTests();
-    failures += RunConfigTests();
     failures += RunInjectionWindowTests();
     failures += RunTrackingSettingsTests();
     failures += RunBuildProfileTests();

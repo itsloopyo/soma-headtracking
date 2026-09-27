@@ -1,358 +1,354 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 itsloopyo
 
-// Config::Load is the one place text a player typed becomes a number that
-// reaches the camera, the UDP bind and the hotkey poller, and until this file
-// existed nothing in the tree compiled it - headers_strict.cpp includes
-// config.h, which is the declarations only.
+// CameraUnlock.ini: the committed file is the table's fresh render, the defaults the dev build ran
+// on map to the defaults, a first start creates the committed file, the mode and yaw hotkeys'
+// saves change only their own lines and leave Defaults.ini and HeadTracking.ini alone, End's row
+// cannot be saved, the removed settings are dropped and logged, the field of view keeps the
+// values the dev build could run on, and a folder the ANSI code page cannot name imports as the
+// dev build read it.
 //
-// Each case below is a value that used to be accepted, or discarded, silently.
-// Every one of them is what a hand-written INI actually contains: the mod seeds
-// no HeadTracking.ini, so there is no correct file for a player to copy.
+// `--render-config <path>` writes the committed file instead (pixi run render-config).
 
 #include "config.h"
-#include "test_support.h"
 
+#include "cameraunlock/tracking/tracking_mode.h"
+
+#include <windows.h>
+
+#include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <stdexcept>
 #include <string>
+#include <vector>
+
+using namespace SomaHT;
 
 namespace {
 
-using SomaHT::testing::NearEqual;
-using SomaHT::testing::Report;
+namespace cfg = cameraunlock::config;
+namespace fs = std::filesystem;
 
-// GetPrivateProfileStringA resolves a relative path against the Windows
-// directory, so every fixture is written to an absolute path.
-class Fixture {
-public:
-    explicit Fixture(const char* body) {
-        path_ = (std::filesystem::temp_directory_path() /
-                 ("soma_ht_config_test_" + std::to_string(++counter_) + ".ini")).string();
-        std::FILE* f = std::fopen(path_.c_str(), "wb");
-        if (f != nullptr) {
-            std::fwrite(body, 1, std::char_traits<char>::length(body), f);
-            std::fclose(f);
-        }
+int g_failures = 0;
+
+void Check(bool ok, const std::string& what) {
+    if (!ok) {
+        std::printf("FAIL: %s\n", what.c_str());
+        ++g_failures;
     }
+}
 
-    ~Fixture() {
-        std::error_code ec;
-        std::filesystem::remove(path_, ec);
+std::string ReadBytes(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("cannot read " + path.string());
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+void WriteBytes(const fs::path& path, const std::string& bytes) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("cannot write " + path.string());
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+
+// The file a first start creates.
+std::string Rendered() {
+    return cfg::RenderCanonicalFresh(MakeConfigTable(), {kConfigDisplayName});
+}
+
+std::string Committed() {
+    return ReadBytes(fs::path(SOMA_COMMITTED_CONFIG));
+}
+
+void TestCommittedConfigIsRendered() {
+    Check(Committed() == Rendered(), "config/CameraUnlock.ini is the table's fresh render (pixi run render-config)");
+}
+
+// A scratch game folder, and a Defaults.ini of its own beside it that the first load creates.
+struct Scratch {
+    fs::path root;
+    fs::path game;
+    fs::path defaults;
+
+    explicit Scratch(const std::wstring& gameFolder) {
+        wchar_t temp[MAX_PATH];
+        GetTempPathW(MAX_PATH, temp);
+        root = fs::path(temp) / (L"soma-config-tests-" + std::to_wstring(GetCurrentProcessId()));
+        game = root / gameFolder;
+        fs::remove_all(game);
+        fs::create_directories(game);
+        fs::create_directories(root / L"user");
+        defaults = root / L"user" / L"CameraUnlock" / L"Defaults.ini";
     }
+    ~Scratch() {
+        std::error_code ignored;
+        fs::remove_all(root, ignored);
+    }
+    Scratch(const Scratch&) = delete;
+    Scratch& operator=(const Scratch&) = delete;
 
-    Fixture(const Fixture&) = delete;
-    Fixture& operator=(const Fixture&) = delete;
-
-    const char* Path() const { return path_.c_str(); }
-
-private:
-    std::string path_;
-    static int counter_;
+    cfg::ConfigOwnerOptions<Config> Options() const {
+        return MakeConfigOwnerOptions(game.wstring() + L"\\", cfg::DefaultsFile::At(defaults.wstring()));
+    }
+    fs::path ConfigPath() const { return game / kConfigFileName; }
+    fs::path LegacyPath() const { return game / kLegacyConfigFileName; }
 };
 
-int Fixture::counter_ = 0;
+std::vector<std::string> Listing(const fs::path& dir) {
+    std::vector<std::string> names;
+    for (const fs::directory_entry& entry : fs::directory_iterator(dir)) names.push_back(entry.path().filename().string());
+    std::sort(names.begin(), names.end());
+    return names;
+}
 
-SomaHT::Config Load(const char* body, bool& loaded) {
-    Fixture ini(body);
-    SomaHT::Config config;
-    loaded = config.Load(ini.Path());
-    return config;
+std::string AllValues(const Config& c) {
+    return cfg::RenderCanonical(MakeConfigTable(), c, {kConfigDisplayName});
+}
+
+// With neither file there, the first start creates CameraUnlock.ini as the committed file and
+// Defaults.ini with the built-in values, and no HeadTracking.ini.
+void TestFirstStartCreatesTheCommittedFile() {
+    const Scratch s(L"first-start");
+    const auto loaded = cfg::ConfigOwner<Config>(s.Options()).Load();
+    Check(loaded.status == cfg::ConfigLoadStatus::Created, "a first start with no file is Created");
+    Check(ReadBytes(s.ConfigPath()) == Committed(), "a first start creates config/CameraUnlock.ini's bytes");
+    Check(Listing(s.game) == std::vector<std::string>{"CameraUnlock.ini"}, "a first start creates CameraUnlock.ini and nothing else");
+    Check(fs::exists(s.defaults), "a first start creates Defaults.ini");
+    Check(AllValues(loaded.config) == AllValues(MakeConfigTable().defaults()), "a first start runs on the built-in values");
+}
+
+cfg::ImportResult MapLegacy(const std::string& bytes, Config& mapped) {
+    const Scratch s(L"map");
+    WriteBytes(s.LegacyPath(), bytes);
+    mapped = MakeConfigTable().defaults();
+    return MakeLegacyImport().run(cfg::LegacyInput{s.LegacyPath().wstring(), s.LegacyPath().string(), false}, mapped);
+}
+
+bool Dropped(const cfg::ImportResult& result, cfg::DropRule rule, const char* section, const char* key) {
+    for (const cfg::DroppedValue& d : result.dropped) {
+        if (d.rule == rule && d.section == section && d.key == key) return true;
+    }
+    return false;
+}
+
+// A fresh install and an upgrade from the dev build's defaults start the same: the map of the
+// frozen defaults holds every row at the table's default, leaves every concept row to
+// Defaults.ini, drops nothing, and every pose-shaping value is the shipped identity, which the
+// code now applies.
+void TestLegacyDefaultsMapToTheDefaults() {
+    wchar_t temp[MAX_PATH];
+    GetTempPathW(MAX_PATH, temp);
+    const fs::path missing = fs::path(temp) / L"soma-no-such-folder" / kLegacyConfigFileName;
+    const auto table = MakeConfigTable();
+    Config mapped = table.defaults();
+    const cfg::ImportResult result =
+        MakeLegacyImport().run(cfg::LegacyInput{missing.wstring(), missing.string(), false}, mapped);
+    Check(result.status == cfg::ImportStatus::Absent, "no file imports as Absent");
+    Check(result.dropped.empty(), "the dev build's defaults drop nothing");
+    Check(result.pose_shaping.size() == 9, "every sensitivity and inversion is recorded");
+    Check(result.follows_defaults_ini.size() == 15, "every one of the 15 concept rows follows Defaults.ini");
+    for (const cfg::PoseShapingValue& value : result.pose_shaping) {
+        Check(value.folded, "[" + value.section + "] " + value.key + " at its shipped value is folded");
+    }
+    Check(AllValues(mapped) == AllValues(table.defaults()), "the dev build's defaults map to the defaults");
+    Check(mapped.toggle_key_name == "End, Ctrl+Shift+Y" && mapped.cycle_tracking_mode_key_name == "PageUp, Ctrl+Shift+G" &&
+              mapped.yaw_mode_key_name == "PageDown, Ctrl+Shift+H",
+          "the old hotkeys and their chords become the fleet's key lists");
+}
+
+// The settings the canonical format has no row for are dropped and recorded; the values that
+// remain settings are carried.
+void TestRemovedSettingsAreDropped() {
+    Config mapped;
+    const cfg::ImportResult result = MapLegacy(
+        "[Position]\r\nEnabled=false\r\nSensitivityZ=2.0\r\n[Crosshair]\r\nCompensate=false\r\n"
+        "[Sensitivity]\r\nInvertPitch=true\r\n[Camera]\r\nSuppressEyeTracking=false\r\nFieldOfView=90\r\n"
+        "[General]\r\nWorldSpaceYaw=false\r\n[Hotkeys]\r\nYawModeKey=0x77\r\n",
+        mapped);
+    Check(result.status == cfg::ImportStatus::Imported, "the file imports");
+    Check(mapped.rotation_enabled && !mapped.position_enabled, "[Position] Enabled=false imports as rotation only");
+    Check(Dropped(result, cfg::DropRule::PositionSwitchOff, "Position", "Enabled"), "the position switch is recorded");
+    Check(Dropped(result, cfg::DropRule::Reticle, "Crosshair", "Compensate"), "Compensate=false is dropped as a reticle setting");
+    Check(Dropped(result, cfg::DropRule::PoseShaping, "Position", "SensitivityZ"), "a changed position sensitivity is dropped");
+    Check(Dropped(result, cfg::DropRule::PoseShaping, "Sensitivity", "InvertPitch"), "a changed inversion is dropped");
+    Check(result.dropped.size() == 4, "nothing else is dropped");
+    Check(!mapped.suppress_eye_tracking && mapped.field_of_view == 90.0f && !mapped.world_space_yaw,
+          "the settings that remain are carried");
+    Check(mapped.yaw_mode_key_name == "F8, Ctrl+Shift+H", "a changed hotkey keeps its chord");
+}
+
+// The field of view reads 0 and 30 to 120, the values the dev build could run on, and nothing
+// else.
+void TestFieldOfViewRange() {
+    for (const auto& [text, ok] : std::vector<std::pair<const char*, bool>>{
+             {"0", true}, {"30", true}, {"75.5", true}, {"120", true}, {"29.9", false}, {"-1", false}, {"121", false}}) {
+        const Scratch s(L"fov");
+        std::string bytes = Committed();
+        const std::string from = "\r\nFieldOfView=0.0\r\n";
+        const size_t at = bytes.find(from);
+        if (at == std::string::npos) throw std::runtime_error("the committed file has no FieldOfView=0.0 line");
+        bytes.replace(at, from.size(), std::string("\r\nFieldOfView=") + text + "\r\n");
+        WriteBytes(s.ConfigPath(), bytes);
+        const auto loaded = cfg::ConfigOwner<Config>(s.Options()).Load();
+        Check(loaded.diagnostics.empty() == ok, std::string("FieldOfView=") + text + (ok ? " reads" : " is refused"));
+        if (!ok) Check(loaded.config.field_of_view == 0.0f, std::string("a refused FieldOfView=") + text + " runs on the game's own field");
+    }
+}
+
+std::vector<std::string> Lines(const std::string& bytes) {
+    std::vector<std::string> lines;
+    size_t start = 0;
+    while (start < bytes.size()) {
+        const size_t end = bytes.find("\r\n", start);
+        lines.push_back(bytes.substr(start, end - start));
+        start = end + 2;
+    }
+    return lines;
+}
+
+// The lines of `after` that differ from `before`, which must have as many lines.
+std::vector<std::string> ChangedLines(const std::string& before, const std::string& after) {
+    const std::vector<std::string> a = Lines(before);
+    const std::vector<std::string> b = Lines(after);
+    if (a.size() != b.size()) return {"a line was added or removed"};
+    std::vector<std::string> changed;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i] != b[i]) changed.push_back(b[i]);
+    }
+    return changed;
+}
+
+bool Contains(const std::vector<std::string>& lines, const std::string& text) {
+    for (const std::string& line : lines) {
+        if (line.find(text) != std::string::npos) return true;
+    }
+    return false;
+}
+
+// A save changes the lines of its rows and no other byte, writes a value over default, and
+// touches neither Defaults.ini nor HeadTracking.ini; the tracking mode and the yaw mode persist,
+// and End's row cannot be saved at all.
+void TestTogglesSave() {
+    const Scratch s(L"save");
+    const std::string committed = Committed();
+    const std::string legacyBytes = "[General]\r\nAutoEnable=false\r\n";
+    WriteBytes(s.ConfigPath(), committed);
+    WriteBytes(s.LegacyPath(), legacyBytes);
+
+    {
+        cfg::ConfigOwner<Config> owner(s.Options());
+        const auto loaded = owner.Load();
+        Check(loaded.status == cfg::ConfigLoadStatus::Canonical, "the committed file loads as canonical");
+        Check(loaded.config.enable_on_startup, "HeadTracking.ini is not read while CameraUnlock.ini exists");
+        Check(Contains(loaded.log, "is left as it was and is not read"),
+              "the log says HeadTracking.ini is not read while CameraUnlock.ini exists");
+        const std::string defaultsBefore = ReadBytes(s.defaults);
+
+        const auto rotationOnly = cameraunlock::EncodeTrackingMode(cameraunlock::TrackingMode::RotationOnly);
+        const cfg::ConfigSaveResult first = owner.Save([rotationOnly](Config& c) {
+            c.rotation_enabled = rotationOnly.rotation_enabled;
+            c.position_enabled = rotationOnly.position_enabled;
+        });
+        Check(first.status == cfg::ConfigSaveStatus::Saved, "the tracking mode saves");
+        Check(Contains(first.log, "no longer follows Defaults.ini"),
+              "the mode save says the pair stopped following Defaults.ini");
+        const std::string afterRotationOnly = ReadBytes(s.ConfigPath());
+        Check(ChangedLines(committed, afterRotationOnly) == std::vector<std::string>{"RotationEnabled=true", "PositionEnabled=false"},
+              "saving rotation only writes the mode pair over default and changes nothing else");
+
+        const auto positionOnly = cameraunlock::EncodeTrackingMode(cameraunlock::TrackingMode::PositionOnly);
+        Check(owner.Save([positionOnly](Config& c) {
+                  c.rotation_enabled = positionOnly.rotation_enabled;
+                  c.position_enabled = positionOnly.position_enabled;
+              }).status == cfg::ConfigSaveStatus::Saved,
+              "the third tracking mode saves");
+        const std::string afterPositionOnly = ReadBytes(s.ConfigPath());
+        Check(ChangedLines(afterRotationOnly, afterPositionOnly) ==
+                  std::vector<std::string>{"RotationEnabled=false", "PositionEnabled=true"},
+              "saving position only changes the mode pair and nothing else");
+
+        Check(owner.Save([](Config& c) { c.world_space_yaw = false; }).status == cfg::ConfigSaveStatus::Saved,
+              "the yaw mode saves");
+        const std::string afterYaw = ReadBytes(s.ConfigPath());
+        Check(ChangedLines(afterPositionOnly, afterYaw) == std::vector<std::string>{"WorldSpaceYaw=false"},
+              "saving the yaw mode writes WorldSpaceYaw over default and changes nothing else");
+
+        Check(owner.Save([](Config&) {}).status == cfg::ConfigSaveStatus::Saved, "an empty save succeeds");
+        Check(ReadBytes(s.ConfigPath()) == afterYaw, "an empty save writes nothing");
+
+        bool refused = false;
+        try {
+            owner.Save([](Config& c) { c.enable_on_startup = false; });
+        } catch (const std::logic_error&) {
+            refused = true;
+        }
+        Check(refused, "EnableOnStartup is not Writable, so the End toggle cannot persist");
+        Check(ReadBytes(s.ConfigPath()) == afterYaw, "a refused save writes nothing");
+
+        Check(ReadBytes(s.defaults) == defaultsBefore, "saving leaves Defaults.ini as it was");
+        Check(ReadBytes(s.LegacyPath()) == legacyBytes, "saving leaves HeadTracking.ini as it was");
+    }
+
+    const auto again = cfg::ConfigOwner<Config>(s.Options()).Load();
+    Check(again.status == cfg::ConfigLoadStatus::Canonical && again.diagnostics.empty() &&
+              !again.config.rotation_enabled && again.config.position_enabled && !again.config.world_space_yaw &&
+              again.config.enable_on_startup,
+          "the saved tracking mode and yaw mode come back at the next start");
+    Check((Listing(s.game) == std::vector<std::string>{"CameraUnlock.ini", kLegacyConfigFileName}),
+          "the game folder holds CameraUnlock.ini and HeadTracking.ini and nothing else");
+}
+
+// The dev build built its path from the ANSI form of the game's folder, and in a folder the ANSI
+// code page cannot name it read no file and ran on its defaults. The import does the same, so such
+// a player migrates to the defaults, and HeadTracking.ini stays as it was.
+void TestAFolderTheCodepageCannotNameImportsAsTheDevBuildReadIt() {
+    const Scratch s(L"soma-\x4E2D");
+    const std::string legacyBytes = "[Network]\r\nUDPPort=5000\r\n";
+    WriteBytes(s.LegacyPath(), legacyBytes);
+    const auto loaded = cfg::ConfigOwner<Config>(s.Options()).Load();
+    if (GetACP() == CP_UTF8) {
+        std::printf("note: the ANSI code page is UTF-8 here, so the folder has an ANSI name\n");
+        Check(loaded.status == cfg::ConfigLoadStatus::Migrated && loaded.config.udp_port == 5000,
+              "with a UTF-8 code page the file is read");
+        return;
+    }
+    Check(loaded.status == cfg::ConfigLoadStatus::Migrated, "a file the dev build could not find migrates to its defaults");
+    Check(loaded.config.udp_port == 4242, "the port is the dev build's default, as that build ran");
+    Check(ReadBytes(s.LegacyPath()) == legacyBytes, "HeadTracking.ini stays as it was");
 }
 
 }  // namespace
 
-int RunConfigTests() {
-    std::cout << "\nConfig tests\n";
-    Report r;
-
-    const SomaHT::Config defaults;
-
-    // IniReader::Open finds a relative path from the working directory and
-    // every read that follows looks for it in the Windows directory instead, so
-    // this is the case where the file that was found is not the file that is
-    // read: the load used to report success and hand back defaults. The fixture
-    // is written into the working directory precisely so the existence check
-    // passes.
-    {
-        const std::filesystem::path previousCwd = std::filesystem::current_path();
-        std::filesystem::current_path(std::filesystem::temp_directory_path());
-        {
-            Fixture ini("[General]\nWorldSpaceYaw=false\n");
-            const std::filesystem::path full(ini.Path());
-            const std::string name = full.filename().string();
-
-            SomaHT::Config config;
-            r.Check(!config.Load(name.c_str()),
-                    "a relative config path is refused even when the file is there");
-            r.Check(config.worldSpaceYaw == defaults.worldSpaceYaw,
-                    "a refused path leaves the defaults alone");
-
-            // The other shape the profile API treats as not fully qualified:
-            // "C:name.ini" is drive-RELATIVE, naming the current directory of
-            // drive C: rather than its root. Built from the fixture's own drive
-            // and filename so the existence check would pass, which is what
-            // makes this the same "the file that was found is not the file that
-            // is read" case rather than just a missing file.
-            const std::string driveRelative = full.root_name().string() + name;
-            SomaHT::Config driveRelativeConfig;
-            r.Check(!driveRelativeConfig.Load(driveRelative.c_str()),
-                    "a drive-relative config path is refused even when the file is there");
-            r.Check(driveRelativeConfig.worldSpaceYaw == defaults.worldSpaceYaw,
-                    "a refused drive-relative path leaves the defaults alone");
+int main(int argc, char** argv) {
+    try {
+        if (argc == 3 && std::strcmp(argv[1], "--render-config") == 0) {
+            WriteBytes(argv[2], Rendered());
+            return 0;
         }
-        std::filesystem::current_path(previousCwd);
+        if (argc != 1) {
+            std::printf("usage: %s [--render-config <path>]\n", argv[0]);
+            return 2;
+        }
 
-        SomaHT::Config config;
-        r.Check(!config.Load(nullptr), "a null config path is refused");
-        r.Check(!config.Load(""), "an empty config path is refused");
+        TestCommittedConfigIsRendered();
+        TestLegacyDefaultsMapToTheDefaults();
+        TestRemovedSettingsAreDropped();
+        TestFieldOfViewRange();
+        TestFirstStartCreatesTheCommittedFile();
+        TestTogglesSave();
+        TestAFolderTheCodepageCannotNameImportsAsTheDevBuildReadIt();
+    } catch (const std::exception& e) {
+        std::printf("FAIL: %s\n", e.what());
+        return 1;
     }
 
-    {
-        SomaHT::Config config;
-        const std::string missing =
-            (std::filesystem::temp_directory_path() / "soma_ht_config_absent.ini").string();
-        std::error_code ec;
-        std::filesystem::remove(missing, ec);
-        r.Check(!config.Load(missing.c_str()), "an absent config file reports not loaded");
+    if (g_failures == 0) {
+        std::printf("config tests: all passed\n");
+        return 0;
     }
-
-    // A comment where the docs put one for a numeric key. IniReader::ReadBool
-    // matches the whole value, so this used to revert to the default with
-    // nothing in the log.
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load(
-            "[General]\nWorldSpaceYaw=false ; camera-local\nAutoEnable=false ; start off\n", loaded);
-        r.Check(loaded, "a config with an inline comment loads");
-        r.Check(c.worldSpaceYaw == false, "a bool survives a trailing ';' comment");
-        r.Check(c.autoEnable == false, "a second bool survives a trailing ';' comment");
-    }
-
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[General]\nWorldSpaceYaw=FALSE\nAutoEnable=Off\n", loaded);
-        r.Check(loaded && c.worldSpaceYaw == false, "a bool is read whatever its casing");
-        r.Check(c.autoEnable == false, "on/off are accepted as bools");
-    }
-
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[General]\nWorldSpaceYaw=maybe\n", loaded);
-        r.Check(loaded && c.worldSpaceYaw == defaults.worldSpaceYaw,
-                "a bool that is not true or false keeps the default");
-    }
-
-    {
-        bool loaded = false;
-        const SomaHT::Config c =
-            Load("[Position]\nEnabled=no\nLimitZ=0.25 ; tighter forward lean\n", loaded);
-        r.Check(loaded && c.positionEnabled == false, "yes/no are accepted as bools");
-        r.Check(NearEqual(c.limitZ, 0.25f), "a limit survives its comment");
-    }
-
-    // strtod parses a prefix, so a European decimal comma used to read back as
-    // 0.0 - inside the valid range, and silent. RemoteSmoothing rather than
-    // LocalSmoothing because its default is not the value the bug produced.
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Sensitivity]\nRemoteSmoothing=0,15\n", loaded);
-        r.Check(loaded && NearEqual(c.remoteSmoothing, defaults.remoteSmoothing),
-                "a decimal comma is refused rather than read as zero");
-    }
-
-    {
-        bool loaded = false;
-        const SomaHT::Config c =
-            Load("[Sensitivity]\nRemoteSmoothing=nan\nYawMultiplier=1e400\n", loaded);
-        r.Check(loaded && NearEqual(c.remoteSmoothing, defaults.remoteSmoothing),
-                "a NaN smoothing falls back to its own default");
-        r.Check(NearEqual(c.yawSens, defaults.yawSens),
-                "an overflowing sensitivity falls back to the default");
-    }
-
-    // Each smoothing key falls back to its own default: a bad RemoteSmoothing
-    // dropping to the local 0.0 would leave a phone's network jitter unsmoothed.
-    {
-        bool loaded = false;
-        const SomaHT::Config c =
-            Load("[Sensitivity]\nLocalSmoothing=0.0\nRemoteSmoothing=oops\n", loaded);
-        r.Check(loaded && NearEqual(c.localSmoothing, 0.0f),
-                "a configured zero smoothing stays zero");
-        r.Check(NearEqual(c.remoteSmoothing, defaults.remoteSmoothing),
-                "a malformed remote smoothing keeps the remote default");
-    }
-
-    // ReadInt is the one reader that hands back 0 rather than its default on a
-    // present-but-unparseable value, and a receiver bound to port 0 takes an
-    // ephemeral port no tracker is sending to.
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Network]\nUDPPort=0\n", loaded);
-        r.Check(loaded && c.udpPort == defaults.udpPort, "port 0 falls back to the default");
-    }
-
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Network]\nUDPPort=70000\n", loaded);
-        r.Check(loaded && c.udpPort == defaults.udpPort,
-                "a port past 65535 falls back rather than truncating to 4464");
-    }
-
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Network]\nUDPPort=5555\n", loaded);
-        r.Check(loaded && c.udpPort == 5555, "a port in range is kept as typed");
-    }
-
-    // A negative limit inverts PositionProcessor's clamp and pins the lean at a
-    // fixed offset instead of freeing it.
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Position]\nLimitZ=-1.0\nLimitX=99999\n", loaded);
-        r.Check(loaded && c.limitZ >= 0.0f, "a negative travel limit is floored at zero");
-        r.Check(c.limitX <= 10.0f, "an absurd travel limit is clamped");
-    }
-
-    // A virtual key GetAsyncKeyState cannot report is a binding that is polled
-    // forever without ever firing.
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Hotkeys]\nToggleKey=0x230\nYawModeKey=0x10\n", loaded);
-        r.Check(loaded && c.toggleKey == defaults.toggleKey,
-                "a key past 0xFE falls back to the default");
-        r.Check(c.yawModeKey == defaults.yawModeKey,
-                "Shift is refused - the chord guard owns the modifiers");
-    }
-
-    // Insert, not Home: Home was half of the recenter pair before mods stopped
-    // keeping a centre, so it stays unbound and must not be enshrined here as a
-    // reasonable alternative.
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Hotkeys]\nToggleKey=0x2D\n", loaded);
-        r.Check(loaded && c.toggleKey == 0x2D, "a bindable key is kept as typed");
-    }
-
-    // ReadHex is a strtol PREFIX parse, so a key NAME parses as a plausible
-    // virtual key and binds something else entirely with nothing in the log.
-    {
-        bool loaded2 = false;
-        const SomaHT::Config d = Load("[Hotkeys]\nToggleKey=Delete\nYawModeKey=End\n", loaded2);
-        r.Check(loaded2 && d.toggleKey == defaults.toggleKey,
-                "a key name does not parse as its hex prefix 0xDE");
-        r.Check(d.yawModeKey == defaults.yawModeKey,
-                "a key name that parses to an unpollable code falls back too");
-    }
-
-    // Zero is the off switch rather than a bad value, and the playable floor is
-    // applied only to a field the player actually asked for.
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Camera]\nFieldOfView=0\n", loaded);
-        r.Check(loaded && NearEqual(c.fieldOfView, 0.0f),
-                "a field of zero stays off rather than being floored");
-    }
-
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Camera]\nFieldOfView=10\n", loaded);
-        r.Check(loaded && NearEqual(c.fieldOfView, 30.0f), "a field below 30 degrees is floored");
-    }
-
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Camera]\nFieldOfView=200\n", loaded);
-        r.Check(loaded && NearEqual(c.fieldOfView, 120.0f), "a field past 120 degrees is clamped");
-    }
-
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Camera]\nFieldOfView=85 ; wider\n", loaded);
-        r.Check(loaded && NearEqual(c.fieldOfView, 85.0f), "a field in range survives its comment");
-    }
-
-    // strtod accepts "nan" and "inf" and overflows a literal like 1e400 to
-    // +inf, and the field of view is the one config value that reaches the
-    // PROJECTION matrix. A non-finite one divided out as tan(fov/2) is a NaN
-    // the game never recovers from - cLuxPlayer calls SetFOV only while a
-    // script fade is in flight - so it has to land on the off switch, not on
-    // the 30-degree playable floor.
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Camera]\nFieldOfView=nan\n", loaded);
-        r.Check(loaded && NearEqual(c.fieldOfView, 0.0f),
-                "a NaN field of view leaves the engine's own field alone");
-    }
-
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Camera]\nFieldOfView=1e400\n", loaded);
-        r.Check(loaded && NearEqual(c.fieldOfView, 0.0f),
-                "an overflowing field of view leaves the engine's own field alone");
-    }
-
-    // A negative multiplier is a legitimate way to invert an axis without
-    // touching the Invert flags, so only the magnitude is bounded. Flooring it
-    // at zero would silently pin the axis instead.
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Sensitivity]\nYawMultiplier=-1.5\n", loaded);
-        r.Check(loaded && NearEqual(c.yawSens, -1.5f),
-                "a negative sensitivity is kept as typed rather than floored");
-    }
-
-    // A player who wants SOMA's own Extended View back alongside the head pose
-    // says so once, and the hook is then never installed.
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[Camera]\nSuppressEyeTracking=off\n", loaded);
-        r.Check(loaded && !c.suppressEyeTracking,
-                "SuppressEyeTracking=off leaves the game's own eye tracking alone");
-    }
-
-    // The shipped defaults, as literals. Every other assertion in this file
-    // compares a loaded Config against a default-constructed one, so all of them
-    // would pass just as happily with the defaults themselves changed. These are
-    // the numbers the docs, the hotkey table and the smoothing model promise.
-    {
-        r.Check(defaults.udpPort == 4242, "the default port is the OpenTrack one");
-        r.Check(defaults.toggleKey == 0x23 && defaults.trackingModeKey == 0x21 &&
-                    defaults.yawModeKey == 0x22,
-                "the default hotkeys are End, Page Up and Page Down");
-        r.Check(NearEqual(defaults.localSmoothing, 0.0f) &&
-                    NearEqual(defaults.remoteSmoothing, 0.15f),
-                "smoothing defaults to none locally and 0.15 remotely");
-        r.Check(NearEqual(defaults.yawSens, 1.0f) && NearEqual(defaults.pitchSens, 1.0f) &&
-                    NearEqual(defaults.rollSens, 1.0f) && NearEqual(defaults.posSensX, 1.0f) &&
-                    NearEqual(defaults.posSensY, 1.0f) && NearEqual(defaults.posSensZ, 1.0f),
-                "every sensitivity defaults to 1.0");
-        r.Check(!defaults.invertYaw && !defaults.invertPitch && !defaults.invertRoll,
-                "no axis is inverted by default");
-        r.Check(NearEqual(defaults.limitX, 0.30f) && NearEqual(defaults.limitY, 0.20f) &&
-                    NearEqual(defaults.limitZ, 0.40f) && NearEqual(defaults.limitZBack, 0.10f),
-                "the travel limits are 0.30 up to 0.40 forward and 0.10 back");
-        r.Check(defaults.positionEnabled && defaults.autoEnable && defaults.worldSpaceYaw &&
-                    defaults.crosshairCompensation,
-                "position, auto-enable, world-space yaw and crosshair compensation are on");
-        r.Check(defaults.suppressEyeTracking,
-                "SOMA's own eye tracking is held off while head tracking runs");
-        r.Check(NearEqual(defaults.fieldOfView, 0.0f),
-                "the field of view override is off, leaving the game's own alone");
-    }
-
-    // An INI that mentions none of the keys is the shipped state, and must not
-    // move a single default.
-    {
-        bool loaded = false;
-        const SomaHT::Config c = Load("[General]\n; nothing set\n", loaded);
-        r.Check(loaded, "an empty config still loads");
-        r.Check(c.udpPort == defaults.udpPort && c.worldSpaceYaw == defaults.worldSpaceYaw &&
-                    NearEqual(c.localSmoothing, defaults.localSmoothing) &&
-                    NearEqual(c.remoteSmoothing, defaults.remoteSmoothing) &&
-                    c.toggleKey == defaults.toggleKey,
-                "an empty config leaves every default where it was");
-    }
-
-    return r.Failures();
+    std::printf("config tests: %d failure(s)\n", g_failures);
+    return 1;
 }

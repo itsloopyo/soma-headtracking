@@ -2,7 +2,7 @@
 # Copyright (c) 2026 itsloopyo
 
 # The mod's own tests. No game needed: the header-only surfaces run against
-# synthetic buffers, and config.cpp against INI files written to a temp dir.
+# synthetic buffers.
 add_executable(soma_headtracking_tests
     test_main.cpp
     aim_projection_tests.cpp
@@ -10,7 +10,6 @@ add_executable(soma_headtracking_tests
     build_profile_tests.cpp
     camera_fov_tests.cpp
     camera_pose_tests.cpp
-    config_tests.cpp
     hpl_math_tests.cpp
     injection_window_tests.cpp
     reticle_litmus_tests.cpp
@@ -81,16 +80,42 @@ target_compile_definitions(soma_hotkeys_oracle PRIVATE
 
 add_executable(config_differential_tests
     ${SOMA_DIFF_DIR}/differential_tests.cpp
+    ../src/config.cpp
     ../src/legacy_config/legacy_config.cpp
 )
 target_include_directories(config_differential_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${SOMA_DIFF_DIR})
 target_compile_definitions(config_differential_tests PRIVATE
-    SOMA_DIFFERENTIAL_DATA="${SOMA_DIFF_DIR}/data")
+    SOMA_DIFFERENTIAL_DATA="${SOMA_DIFF_DIR}/data"
+    SOMA_COMMITTED_CONFIG="${CMAKE_SOURCE_DIR}/config/CameraUnlock.ini")
 target_link_libraries(config_differential_tests PRIVATE
     cameraunlock soma_config_oracle soma_hotkeys_oracle)
 if(MSVC)
     target_compile_options(config_differential_tests PRIVATE /W4 /permissive-)
 endif()
 add_test(NAME config_differential_tests COMMAND config_differential_tests)
+
+# Core's canonical config lint over the committed file and every file the differential test
+# migrated, which it writes beside itself under migrated.
+add_test(NAME config_lint COMMAND node
+    ${SOMA_DIFF_DIR}/lint-migrated.mjs
+    $<TARGET_FILE_DIR:config_differential_tests>/migrated)
+set_tests_properties(config_lint PROPERTIES DEPENDS config_differential_tests)
+
+# The committed config against the table, a first start, the hotkeys' saves and the legacy file's
+# ANSI path. `--render-config <path>` makes it write the committed file instead
+# (pixi run render-config).
+add_executable(config_tests
+    config_tests.cpp
+    ../src/config.cpp
+    ../src/legacy_config/legacy_config.cpp
+)
+target_include_directories(config_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+target_compile_definitions(config_tests PRIVATE
+    SOMA_COMMITTED_CONFIG="${CMAKE_SOURCE_DIR}/config/CameraUnlock.ini")
+target_link_libraries(config_tests PRIVATE cameraunlock)
+if(MSVC)
+    target_compile_options(config_tests PRIVATE /W4 /permissive-)
+endif()
+add_test(NAME config_tests COMMAND config_tests)

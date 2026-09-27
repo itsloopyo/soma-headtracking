@@ -34,6 +34,11 @@ build-release = { cmd = "cmake --build build --config Release", depends-on = ["s
 # `package` already builds it, so CI compiles once rather than twice.
 test = { cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tests.ps1", depends-on = ["build-release"] }
 
+# Rewrite config/CameraUnlock.ini, the committed copy of the CameraUnlock.ini the mod creates at
+# first launch, from the config table after a change to a row, a comment or a default.
+# encode-seed then says there is no launcher-manifest.json to update.
+render-config = { cmd = "build/tests/Release/config_tests.exe --render-config config/CameraUnlock.ini && node cameraunlock-core/scripts/encode-seed.mjs", depends-on = ["build-release"] }
+
 # bin/ as well as build/. CMake writes the .asi to ${CMAKE_SOURCE_DIR}/bin,
 # outside the CMake binary dir, so wiping build/ alone leaves the previous
 # version's shipped artifact sitting where package-release.ps1 reads from.

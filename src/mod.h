@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 #include "aim_ray.h"
 #include "config.h"
@@ -76,16 +77,14 @@ public:
     // after this turns true is the first one used; the frame in between places
     // the crosshair along the aim direction, which is what a stale ray does
     // anyway.
-    bool WantsAimRay() const {
-        return m_config.crosshairCompensation && m_enabled.load();
-    }
+    bool WantsAimRay() const { return m_enabled.load(); }
 
     // Called from the eye tracking hook, on whatever thread asked the game
     // whether its tracker is tracking. Reports nothing but the mod's own state:
     // the setting is fixed after Initialize and the enable flag is atomic, so a
     // toggle takes effect on the next question and hands the feature back.
     bool SuppressEyeTracking() const {
-        return m_config.suppressEyeTracking && m_enabled.load();
+        return m_config.suppress_eye_tracking && m_enabled.load();
     }
 
     Mod(const Mod&) = delete;
@@ -102,6 +101,10 @@ private:
 
     // Initialize, in the order the log reports them.
     void LoadConfig();
+    // Writes a change to the Writable rows through the owner and logs the
+    // result. The running state already holds the new value.
+    template <typename Change>
+    void SaveConfig(const char* what, Change change);
     void ApplyTrackingSettings();
     bool InstallHooks();
     void StartReceiver();
@@ -123,6 +126,10 @@ private:
     bool ApplyFieldOfView(void* camera, camera::InjectionWindow& window);
 
     Config m_config;
+    // Built in LoadConfig and never destroyed, like the Mod itself. Only the
+    // hotkey poller's thread calls Save after startup. Null when the game's
+    // folder could not be resolved, in which case nothing is saved.
+    std::unique_ptr<cameraunlock::config::ConfigOwner<Config>> m_owner;
     cameraunlock::UdpReceiver m_receiver;
     cameraunlock::HeadTrackingSession<cameraunlock::UdpReceiver> m_session;
     cameraunlock::input::HotkeyPoller m_hotkeys;
@@ -135,8 +142,11 @@ private:
 
     // Requested on the hotkey thread, run on the render thread. The mode
     // change itself is atomic, but it resets the interpolator and the position
-    // processor's smoothing state, which the render thread is reading.
+    // processor's smoothing state, which the render thread is reading. The
+    // hotkey thread computes the next mode from the one the render thread last
+    // applied and stores it here, so two presses before one frame are one step.
     cameraunlock::input::DeferredAction m_cycleModeRequest;
+    std::atomic<int> m_desiredMode{0};
 
     int64_t m_lastFrameTicks = 0;
     float m_yaw = 0.0f, m_pitch = 0.0f, m_roll = 0.0f;

@@ -4,12 +4,12 @@
 // Characterization tests for tracking_settings.h - the one place a Config field
 // becomes a core settings field.
 //
-// A field that is not carried across is a setting the INI documents, the reader
-// validates, the log reports, and nothing acts on. Nothing else in the tree
-// would notice: the mod builds, the game runs, the value is simply never asked
-// for. Every field of both structs is checked here for that reason, with a
-// distinct value in each so a transposed pair fails rather than passing on two
-// defaults that happen to agree.
+// A field that is not carried across is a setting the INI documents, the
+// config table reads, the log reports, and nothing acts on. Nothing else in the
+// tree would notice: the mod builds, the game runs, the value is simply never
+// asked for. Every limit is checked here for that reason, with a distinct value
+// in each so a transposed pair fails rather than passing on two defaults that
+// happen to agree.
 
 #include "tracking_settings.h"
 #include "test_support.h"
@@ -26,20 +26,11 @@ using SomaHT::testing::Report;
 // the value that was set rather than about a shared 1.0.
 SomaHT::Config DistinctConfig() {
     SomaHT::Config config;
-    config.yawSens = 1.5f;
-    config.pitchSens = 0.5f;
-    config.rollSens = 2.25f;
-    config.invertYaw = true;
-    config.invertPitch = false;
-    config.invertRoll = true;
-
-    config.posSensX = 1.25f;
-    config.posSensY = 0.75f;
-    config.posSensZ = 2.5f;
-    config.limitX = 0.11f;
-    config.limitY = 0.13f;
-    config.limitZ = 0.17f;
-    config.limitZBack = 0.19f;
+    config.limit_x = 0.11f;
+    config.limit_y = 0.13f;
+    config.limit_y_down = 0.15f;
+    config.limit_z = 0.17f;
+    config.limit_z_back = 0.19f;
     return config;
 }
 
@@ -52,19 +43,11 @@ int RunTrackingSettingsTests() {
     const SomaHT::Config config = DistinctConfig();
 
     {
-        const cameraunlock::SensitivitySettings sens = SomaHT::SensitivityFrom(config);
-        r.Check(NearEqual(sens.yaw, 1.5f) && NearEqual(sens.pitch, 0.5f) &&
-                    NearEqual(sens.roll, 2.25f),
-                "each rotation sensitivity reaches its own axis");
-        r.Check(sens.invert_yaw && !sens.invert_pitch && sens.invert_roll,
-                "each rotation inversion reaches its own axis");
-    }
-
-    {
         const cameraunlock::PositionSettings pos = SomaHT::PositionFrom(config);
-        r.Check(NearEqual(pos.sensitivity_x, 1.25f) && NearEqual(pos.sensitivity_y, 0.75f) &&
-                    NearEqual(pos.sensitivity_z, 2.5f),
-                "each position sensitivity reaches its own axis");
+        const cameraunlock::PositionSettings identity;
+        r.Check(pos.sensitivity_x == identity.sensitivity_x && pos.sensitivity_y == identity.sensitivity_y &&
+                    pos.sensitivity_z == identity.sensitivity_z,
+                "the position sensitivities stay at identity");
         r.Check(NearEqual(pos.limit_x, 0.11f) && NearEqual(pos.limit_z, 0.17f) &&
                     NearEqual(pos.limit_z_back, 0.19f),
                 "the x and both z limits reach their own fields");
@@ -72,15 +55,12 @@ int RunTrackingSettingsTests() {
         // there must not be one. The axis conversion happens once, at the
         // engine boundary, and a second user-reachable place to flip a sign
         // puts the asymmetric z limits the wrong way round.
-        r.Check(!pos.invert_x && !pos.invert_y && !pos.invert_z,
-                "each position inversion reaches its own axis");
+        r.Check(!pos.invert_x && !pos.invert_y && !pos.invert_z, "no position axis is inverted");
 
-        // The clamp is [-limit_y_down, +limit_y]. The mod carries one vertical
-        // limit, so it has to land in both: left at its own default, raising
-        // LimitY would widen the upward budget alone and downward travel would
-        // stay pinned at core's 0.20m.
-        r.Check(NearEqual(pos.limit_y, 0.13f) && NearEqual(pos.limit_y_down, 0.13f),
-                "the one configured vertical limit is mirrored into limit_y_down");
+        // The clamp is [-limit_y_down, +limit_y], and each vertical limit
+        // reaches its own side.
+        r.Check(NearEqual(pos.limit_y, 0.13f) && NearEqual(pos.limit_y_down, 0.15f),
+                "each vertical limit reaches its own field");
     }
 
     {
@@ -95,13 +75,12 @@ int RunTrackingSettingsTests() {
     }
 
     {
-        // A default config maps to core's own defaults, which is what makes
-        // "no HeadTracking.ini" and "an INI with nothing in it" the same game.
+        // A default config maps to core's own defaults.
         const SomaHT::Config defaults;
         const cameraunlock::PositionSettings pos = SomaHT::PositionFrom(defaults);
         const cameraunlock::PositionSettings core;
         r.Check(NearEqual(pos.limit_x, core.limit_x) && NearEqual(pos.limit_y, core.limit_y) &&
-                    NearEqual(pos.limit_z, core.limit_z) &&
+                    NearEqual(pos.limit_y_down, core.limit_y_down) && NearEqual(pos.limit_z, core.limit_z) &&
                     NearEqual(pos.limit_z_back, core.limit_z_back),
                 "an unedited config maps to core's own position limits");
     }

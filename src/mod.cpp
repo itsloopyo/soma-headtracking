@@ -11,15 +11,22 @@
 #include "camera_hook.h"
 #include "camera_pose.h"
 #include "crosshair_hook.h"
-#include "exe_paths.h"
 #include "eye_tracking.h"
 #include "gameplay_gate.h"
 #include "gui_input_hook.h"
 #include "hpl_math.h"
 #include "tracking_settings.h"
 
-#include "cameraunlock/input/chord_hotkeys.h"
+#include "cameraunlock/input/key_binding_registration.h"
+#include "cameraunlock/input/key_bindings.h"
 #include "cameraunlock/logging/file_log.h"
+#include "cameraunlock/os/module_paths.h"
+#include "cameraunlock/tracking/tracking_mode.h"
+
+#include <functional>
+#include <optional>
+#include <stdexcept>
+#include <utility>
 
 namespace SomaHT {
 namespace {
@@ -96,31 +103,73 @@ Mod& Mod::Instance() {
     return *instance;
 }
 
+// Reads CameraUnlock.ini beside the game's EXE, importing HeadTracking.ini once
+// while it is absent. Where Windows reports no folder for the EXE there is no
+// file to read, so the session runs on the built-in values and saves nothing.
 void Mod::LoadConfig() {
-    const std::string path = paths::NextToHostExe("HeadTracking.ini");
-    if (m_config.Load(path.c_str())) {
-        cameraunlock::logging::Line("Config loaded from %s", path.c_str());
+    const std::wstring dir = cameraunlock::os::HostExeDirectory();
+    if (dir.empty()) {
+        m_config = MakeConfigTable().defaults();
+        cameraunlock::logging::Line(
+            "Config: the game's folder could not be resolved, so %s is not read and nothing is "
+            "saved this session. Running on the built-in values.",
+            kConfigFileName);
     } else {
-        cameraunlock::logging::Line("No config at %s - using defaults.", path.c_str());
+        cameraunlock::config::ConfigOwnerOptions<Config> options =
+            MakeConfigOwnerOptions(dir + L"\\", cameraunlock::config::DefaultsFile::PerUser());
+        // The mod has no overlay, so the player's one-line messages (an import that
+        // did not run, Defaults.ini that cannot be read, a save that failed) go to
+        // the log, the only place they can be seen.
+        options.status_sink = [](const std::string& message) {
+            cameraunlock::logging::Line("Config: %s", message.c_str());
+        };
+        m_owner = std::make_unique<cameraunlock::config::ConfigOwner<Config>>(std::move(options));
+        const cameraunlock::config::ConfigLoadResult<Config> loaded = m_owner->Load();
+        for (const std::string& line : loaded.log) cameraunlock::logging::Line("Config: %s", line.c_str());
+        cameraunlock::logging::Line("Config: %s %s", kConfigFileName,
+                                    cameraunlock::config::ConfigLoadStatusName(loaded.status));
+        m_config = loaded.config;
     }
-    m_worldSpaceYaw.store(m_config.worldSpaceYaw);
+    m_worldSpaceYaw.store(m_config.world_space_yaw);
+    cameraunlock::logging::Line(
+        "Config: port=%u enabled=%d mode=(rotation %d, position %d) smoothing=(local %.2f, remote "
+        "%.2f) limits=(x %.2f, y %.2f/%.2f, z %.2f/%.2f) worldYaw=%d suppressEyeTracking=%d fov=%.1f",
+        static_cast<unsigned>(m_config.udp_port), m_config.enable_on_startup ? 1 : 0,
+        m_config.rotation_enabled ? 1 : 0, m_config.position_enabled ? 1 : 0,
+        static_cast<double>(m_config.local_smoothing), static_cast<double>(m_config.remote_smoothing),
+        static_cast<double>(m_config.limit_x), static_cast<double>(m_config.limit_y),
+        static_cast<double>(m_config.limit_y_down), static_cast<double>(m_config.limit_z),
+        static_cast<double>(m_config.limit_z_back), m_config.world_space_yaw ? 1 : 0,
+        m_config.suppress_eye_tracking ? 1 : 0, static_cast<double>(m_config.field_of_view));
+}
+
+template <typename Change>
+void Mod::SaveConfig(const char* what, Change change) {
+    if (!m_owner) return;
+    const cameraunlock::config::ConfigSaveResult saved = m_owner->Save(std::move(change));
+    for (const std::string& line : saved.log) cameraunlock::logging::Line("Config: %s", line.c_str());
+    if (saved.status != cameraunlock::config::ConfigSaveStatus::Saved) {
+        cameraunlock::logging::Line("Config: %s not saved (%s)", what,
+                                    cameraunlock::config::ConfigSaveStatusName(saved.status));
+    }
 }
 
 void Mod::ApplyTrackingSettings() {
-    m_session.GetProcessor().SetSensitivity(SensitivityFrom(m_config));
-
     static_assert(cameraunlock::HeadTrackingSession<cameraunlock::UdpReceiver>::kHasRemoteConnection,
                   "receiver must classify connection locality, or smoothing "
                   "silently stays on the local parameter forever");
-    m_session.SetLocalSmoothing(m_config.localSmoothing);
-    m_session.SetRemoteSmoothing(m_config.remoteSmoothing);
+    m_session.SetLocalSmoothing(m_config.local_smoothing);
+    m_session.SetRemoteSmoothing(m_config.remote_smoothing);
     // Before the two smoothing setters or after them, either way:
     // SetPositionSettings recomposes the session's own two values onto the
     // struct, which is why PositionFrom does not carry them.
     m_session.SetPositionSettings(PositionFrom(m_config));
-    if (!m_config.positionEnabled) {
-        m_session.SetMode(cameraunlock::TrackingMode::RotationOnly);
-    }
+    // The table refuses a pair with both channels off, so every loaded pair
+    // decodes.
+    const std::optional<cameraunlock::TrackingMode> mode =
+        cameraunlock::DecodeTrackingMode(m_config.rotation_enabled, m_config.position_enabled);
+    if (!mode) throw std::logic_error("the config holds a tracking mode with both channels off");
+    m_session.SetMode(*mode);
 }
 
 // The gameplay gate goes with the camera hook rather than being optional:
@@ -146,7 +195,7 @@ bool Mod::InstallHooks() {
             "Terminal mouse ray not compensated - clicking a computer screen will be offset "
             "while the head is off centre.");
     }
-    if (m_config.suppressEyeTracking && !eyetrack::InstallSuppression()) {
+    if (m_config.suppress_eye_tracking && !eyetrack::InstallSuppression()) {
         cameraunlock::logging::Line(
             "Eye tracking: not held off - SOMA's own Extended View will move the camera too.");
     }
@@ -160,31 +209,44 @@ bool Mod::InstallHooks() {
 void Mod::StartReceiver() {
     m_receiver.SetLog(
         [](const std::string& s) { cameraunlock::logging::Line("UDP: %s", s.c_str()); });
-    if (m_receiver.Start(static_cast<uint16_t>(m_config.udpPort))) {
-        cameraunlock::logging::Line("UDP receiver listening on port %d.", m_config.udpPort);
+    if (m_receiver.Start(m_config.udp_port)) {
+        cameraunlock::logging::Line("UDP receiver listening on port %u.",
+                                    static_cast<unsigned>(m_config.udp_port));
     } else {
-        cameraunlock::logging::Line("UDP receiver retrying on port %d...", m_config.udpPort);
+        cameraunlock::logging::Line("UDP receiver retrying on port %u...",
+                                    static_cast<unsigned>(m_config.udp_port));
     }
 }
 
+namespace {
+
+// The table read every list through the hotkey codec, so a list that does not
+// parse here is a bug, not a player's typo.
+void Register(cameraunlock::input::HotkeyPoller& poller, const std::string& list, const char* key,
+              std::function<void()> action) {
+    const cameraunlock::input::KeyBindingsParseResult parsed = cameraunlock::input::ParseKeyBindings(list);
+    if (!parsed.ok()) {
+        throw std::logic_error(std::string("[Hotkeys] ") + key + "=" + list + " does not parse: " + parsed.error);
+    }
+    cameraunlock::input::RegisterKeyBindings(poller, parsed.bindings, std::move(action));
+}
+
+}  // namespace
+
+// A binding without modifiers does not fire while Ctrl and Shift are both held,
+// so a Ctrl+Shift+<nav> press cannot fire an action through both its nav key
+// and its chord.
 void Mod::RegisterHotkeys() {
-    using cameraunlock::input::ChordGuarded;
-    using cameraunlock::input::NavGuarded;
-
-    // Nav-cluster keys, suppressed while the chord modifier is held so the
-    // chord path is the sole trigger for Ctrl+Shift combinations.
-    m_hotkeys.AddHotkey(m_config.toggleKey,       NavGuarded([] { Instance().Toggle(); }));
-    m_hotkeys.AddHotkey(m_config.trackingModeKey, NavGuarded([] { Instance().CycleMode(); }));
-    m_hotkeys.AddHotkey(m_config.yawModeKey,      NavGuarded([] { Instance().ToggleYawMode(); }));
-
-    m_hotkeys.AddHotkey('Y', ChordGuarded([] { Instance().Toggle(); }));
-    m_hotkeys.AddHotkey('G', ChordGuarded([] { Instance().CycleMode(); }));
-    m_hotkeys.AddHotkey('H', ChordGuarded([] { Instance().ToggleYawMode(); }));
+    Register(m_hotkeys, m_config.toggle_key_name, "ToggleKey", [] { Instance().Toggle(); });
+    Register(m_hotkeys, m_config.cycle_tracking_mode_key_name, "CycleTrackingModeKey",
+             [] { Instance().CycleMode(); });
+    Register(m_hotkeys, m_config.yaw_mode_key_name, "YawModeKey", [] { Instance().ToggleYawMode(); });
 
     m_hotkeys.Start(kHotkeyPollIntervalMs);
-    cameraunlock::logging::Line(
-        "Hotkeys: 0x%X=Toggle 0x%X=CycleMode 0x%X=YawMode (+ Ctrl+Shift+Y/G/H).",
-        m_config.toggleKey, m_config.trackingModeKey, m_config.yawModeKey);
+    cameraunlock::logging::Line("Hotkeys: toggle=%s, cycle mode=%s, yaw mode=%s.",
+                                m_config.toggle_key_name.c_str(),
+                                m_config.cycle_tracking_mode_key_name.c_str(),
+                                m_config.yaw_mode_key_name.c_str());
 }
 
 void Mod::Initialize() {
@@ -204,7 +266,7 @@ void Mod::Initialize() {
     StartReceiver();
     RegisterHotkeys();
 
-    m_enabled.store(m_config.autoEnable);
+    m_enabled.store(m_config.enable_on_startup);
     m_initialized.store(true);
     cameraunlock::logging::Line("Mod initialized (tracking %s, %s yaw).",
                                 m_enabled.load() ? "ON" : "OFF",
@@ -233,32 +295,31 @@ void Mod::Toggle() {
 // Requested here, run in ComputeFrame. SetMode resets the interpolator and the
 // position processor's smoothing state, and the render thread is inside
 // Update() reading exactly those fields; doing it from the hotkey thread is a
-// data race, not a benign one.
+// data race, not a benign one. The next mode is computed from the one the
+// render thread last applied, stored, and saved here, off the render thread.
 void Mod::CycleMode() {
-    // The setting is expressed by parking the session in RotationOnly, and the
-    // cycle would walk straight back out of it - two presses and a player who
-    // turned positional tracking off in the ini is in full 6DOF again, with
-    // nothing saying so and no way back but to press until they land on the
-    // state they configured. There is no positional half to cycle through here,
-    // so the key does nothing and says why.
-    if (!m_config.positionEnabled) {
-        cameraunlock::logging::Line(
-            "Tracking mode: rotation only - [Position] Enabled is false in the config, so there "
-            "is no positional half to cycle to.");
-        return;
-    }
+    const auto next =
+        static_cast<cameraunlock::TrackingMode>((static_cast<int>(m_session.GetMode()) + 1) % 3);
+    m_desiredMode.store(static_cast<int>(next));
     m_cycleModeRequest.Request();
+    cameraunlock::logging::Line("Tracking mode: %s", ModeName(next));
+    const cameraunlock::TrackingModeChannels channels = cameraunlock::EncodeTrackingMode(next);
+    SaveConfig("tracking mode", [channels](Config& c) {
+        c.rotation_enabled = channels.rotation_enabled;
+        c.position_enabled = channels.position_enabled;
+    });
 }
 
 void Mod::ToggleYawMode() {
     const bool now = !m_worldSpaceYaw.load();
     m_worldSpaceYaw.store(now);
     cameraunlock::logging::Line("Yaw mode: %s", now ? "world-space" : "camera-local");
+    SaveConfig("yaw mode", [now](Config& c) { c.world_space_yaw = now; });
 }
 
 void Mod::ComputeFrame() {
     if (m_cycleModeRequest.Consume()) {
-        cameraunlock::logging::Line("Tracking mode: %s", ModeName(m_session.CycleMode()));
+        m_session.SetMode(static_cast<cameraunlock::TrackingMode>(m_desiredMode.load()));
     }
 
     const int64_t now = NowTicks();
@@ -278,8 +339,8 @@ void Mod::ComputeFrame() {
         return;
     }
 
-    m_diag.ConnectionLocality(m_session.IsRemoteConnection(), m_config.localSmoothing,
-                              m_config.remoteSmoothing);
+    m_diag.ConnectionLocality(m_session.IsRemoteConnection(), m_config.local_smoothing,
+                              m_config.remote_smoothing);
     m_diag.ConnectionState(m_receiver.IsReceiving());
     m_rotValid = m_session.GetRotation(m_yaw, m_pitch, m_roll);
     m_posValid = m_session.GetPositionOffset(m_offsetX, m_offsetY, m_offsetZ);
@@ -300,7 +361,7 @@ void Mod::OnAimRay(const float dir[3], float distance, bool hit) {
 // composition at both injection points rather than after it.
 bool Mod::ApplyFieldOfView(void* camera, camera::InjectionWindow& window) {
     const float baseDegrees = fov::BaseDegrees(gate::Base());
-    const float scale = fov::ScaleFor(m_config.fieldOfView, baseDegrees);
+    const float scale = fov::ScaleFor(m_config.field_of_view, baseDegrees);
     fov::Field field{};
     const bool fieldOk = fov::Apply(camera, scale, field, window.savedFov);
     window.fovOverridden = fieldOk && scale != 1.0f;
@@ -313,8 +374,8 @@ bool Mod::ApplyFieldOfView(void* camera, camera::InjectionWindow& window) {
 
     m_tanX = field.tanX;
     m_tanY = field.tanY;
-    m_zoom = fov::ZoomFactor(field, fov::NormalPlayRadians(m_config.fieldOfView, baseDegrees));
-    m_diag.FieldBasis(field, baseDegrees, m_config.fieldOfView, m_zoom);
+    m_zoom = fov::ZoomFactor(field, fov::NormalPlayRadians(m_config.field_of_view, baseDegrees));
+    m_diag.FieldBasis(field, baseDegrees, m_config.field_of_view, m_zoom);
     return true;
 }
 
@@ -454,7 +515,7 @@ void* Mod::BeginGuiInput() {
 void Mod::EndGuiInput(void* camera) { m_gui.Restore(camera); }
 
 CrosshairPlacement Mod::GetCrosshairPlacement(float& ndcX, float& ndcY) {
-    if (!m_renderViewValid || !m_config.crosshairCompensation) {
+    if (!m_renderViewValid) {
         return CrosshairPlacement::Unchanged;
     }
 

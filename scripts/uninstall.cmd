@@ -34,10 +34,10 @@ set "MOD_SEED_FILES="
 :: reinstall: paths relative to the game folder, quoted when one holds a space.
 :: Keep the line when it is blank, or the list another mod's uninstall.cmd set
 :: in the same console is used instead.
-set "PRESERVE_FILES="
+set "PRESERVE_FILES=CameraUnlock.ini HeadTracking.ini"
 :: Log files the mod writes at runtime, removed from wherever the DLLs were
-:: deployed. HeadTracking.ini is deliberately not here: the player writes it by
-:: hand, install.cmd never places one, and this list is deleted unprompted.
+:: deployed. CameraUnlock.ini and HeadTracking.ini are in PRESERVE_FILES instead:
+:: they hold the player's settings, and this list is deleted unprompted.
 set "MOD_LEFTOVERS=HeadTracking.log HeadTracking.prev.log"
 :: Files to remove from the game root. Only needed by a mod deployed BELOW the
 :: root (see ASI_SUBDIR) that still resolves its config and log from the exe's

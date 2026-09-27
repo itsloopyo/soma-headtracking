@@ -99,6 +99,9 @@ Two equivalent binding sets - use whichever your keyboard has:
 | Cycle tracking mode | `Page Up`   | `Ctrl+Shift+G`  |
 | Toggle yaw mode     | `Page Down` | `Ctrl+Shift+H`  |
 
+Both keys of each action are the `ToggleKey`, `CycleTrackingModeKey` and
+`YawModeKey` lists in `CameraUnlock.ini`, so either can be rebound there.
+
 `Page Up` / `Ctrl+Shift+G` cycles tracking mode:
 
 1. Normal head-tracked gameplay
@@ -111,76 +114,116 @@ Two equivalent binding sets - use whichever your keyboard has:
 1. World-locked (the default). Yaw turns about the world up axis, so turning your head pans across the horizon however far the mouse has pitched the view up or down.
 2. Camera-local. Yaw turns about the camera's own up axis, so with the view pitched steeply the same head movement rolls the picture instead of panning it.
 
-The mod comes up in whichever mode `WorldSpaceYaw` selects and the key change lasts until the game closes.
+The tracking mode and the yaw mode you pick are saved to `CameraUnlock.ini` and come back at the next start. Toggling tracking with `End` lasts for the session only: the mod starts with tracking on or off as `EnableOnStartup` says.
 
 ## Configuration
 
-Settings live in `HeadTracking.ini`, next to `Soma.exe`. You write that file yourself: the mod reads it at startup if it is there and runs on the defaults if it is not, and any key you leave out keeps its default. Restart the game after editing it. A value outside the accepted range is clamped or rejected, with a line in `HeadTracking.log` saying which one and what was used instead.
+Apart from creating `CameraUnlock.ini` at startup when there is none, the mod writes to it only when a hotkey changes the tracking mode or the yaw mode. Edit it with the game closed.
+
+<!-- cameraunlock:config -->
+The mod reads its settings from `CameraUnlock.ini` in the game folder, and creates the file when it starts and finds none. Edit it with any text editor.
+
+A setting set to `default` takes its value from `Defaults.ini`, which every head tracking mod that keeps its settings in `CameraUnlock.ini` reads. Head tracking mods that keep their settings in another file do not read it. Writing a value in place of `default` changes that setting for this game only. When the mod saves a setting that a hotkey changed in game, it writes the new value in place of `default`, so that setting no longer follows `Defaults.ini` in this game until you set it to `default` again.
+
+`Defaults.ini` is `%AppData%\CameraUnlock\Defaults.ini` on Windows; `$XDG_CONFIG_HOME/CameraUnlock/Defaults.ini` on Linux, or `~/.config/CameraUnlock/Defaults.ini` where `XDG_CONFIG_HOME` is not set, under Wine and Proton too; and `~/Library/Application Support/CameraUnlock/Defaults.ini` on macOS. The mod's log, where it writes one, names the file it read.
+
+When the mod starts and finds no `Defaults.ini`, it creates one holding the built-in values, unless Windows runs the game as a packaged app. The mod never changes `Defaults.ini` after that. Edit it with any text editor.
+
+The built-in value of each setting set to `default` below:
+
+- `UdpPort=4242`
+- `EnableOnStartup=true`
+- `WorldSpaceYaw=true`
+- `RotationEnabled=true`
+- `LocalSmoothing=0.0`
+- `RemoteSmoothing=0.15`
+- `PositionEnabled=true`
+- `PositionLimitX=0.3`
+- `PositionLimitY=0.2`
+- `PositionLimitYDown=0.2`
+- `PositionLimitZ=0.4`
+- `PositionLimitZBack=0.1`
+- `ToggleKey=End, Ctrl+Shift+Y`
+- `CycleTrackingModeKey=PageUp, Ctrl+Shift+G`
+- `YawModeKey=PageDown, Ctrl+Shift+H`
+
+With every setting at its default, the file reads:
 
 ```ini
+; SOMA head tracking settings.
+; Comments start with ; and go on their own line. Text after a value is part of the value.
+; Hotkeys are key names such as End, PageUp or Ctrl+Shift+Y. Separate several with commas; leave empty for none.
+; A setting set to default takes its value from Defaults.ini, which every head tracking mod
+; that keeps its settings in CameraUnlock.ini reads: %AppData%\CameraUnlock\Defaults.ini on
+; Windows, $XDG_CONFIG_HOME/CameraUnlock/Defaults.ini (normally ~/.config/CameraUnlock) on
+; Linux, under Wine and Proton too, and ~/Library/Application Support/CameraUnlock/Defaults.ini
+; on macOS. The log names the file it read. Write a value instead of default to change that
+; setting for this game only.
+
+[CameraUnlock]
+; Written by the mod. Leave this section in place.
+ConfigFormat=1
+
 [Network]
-; Port the tracker sends to. 1024-65535.
-UDPPort=4242
-
-[Sensitivity]
-YawMultiplier=1.0
-PitchMultiplier=1.0
-RollMultiplier=1.0
-InvertYaw=false
-InvertPitch=false
-InvertRoll=false
-; Smoothing is picked per connection from the packet's source address. A
-; tracker on this PC sending to 127.0.0.1 gets LocalSmoothing; a phone or
-; another machine on your network gets RemoteSmoothing. Whichever applies
-; covers rotation and position alike. Both accept 0.0 to 1.0.
-LocalSmoothing=0.0
-RemoteSmoothing=0.15
-
-[Position]
-Enabled=true
-SensitivityX=1.0
-SensitivityY=1.0
-SensitivityZ=1.0
-; Movement envelope in meters. Leaning forward gets far more travel than
-; leaning back, so pulling away from the screen does not push the camera
-; into the back of the player's own body.
-LimitX=0.30
-LimitY=0.20
-LimitZ=0.40
-LimitZBack=0.10
-
-[Crosshair]
-; Moves SOMA's crosshair onto the interaction ray. Set false to leave the
-; crosshair drawn where the game puts it.
-Compensate=true
-
-[Camera]
-; Vertical field of view in degrees. 0 leaves the game's own field alone.
-; Accepted range is 30 to 120; anything outside it is clamped.
-FieldOfView=0
-; Holds SOMA's own Tobii eye tracking off while head tracking is enabled.
-; Set false to leave the game's eye tracking running alongside the mod.
-SuppressEyeTracking=true
-
-[Hotkeys]
-; Virtual key codes for the three keys in the Controls table.
-ToggleKey=0x23         ; End
-TrackingModeKey=0x21   ; Page Up
-YawModeKey=0x22        ; Page Down
+; UDP port the mod receives tracker data on (OpenTrack protocol).
+UdpPort=default
 
 [General]
-; true = yaw turns about the world up axis and stays horizon-locked (default)
-; false = yaw turns about the camera's own up axis
-WorldSpaceYaw=true
-; Whether tracking is on when the game starts.
-AutoEnable=true
+; true: head tracking is on when the game starts. ToggleKey turns it on and off.
+EnableOnStartup=default
+; true: yaw turns around the world's up axis. false: around the camera's own up axis.
+WorldSpaceYaw=default
+; true: turning your head turns the view.
+; Tracking mode at startup, with PositionEnabled. The mode hotkey changes both.
+RotationEnabled=default
+
+[Smoothing]
+; Smoothing when the tracker runs on this PC. 0 is the least, 1 the most.
+LocalSmoothing=default
+; Smoothing when the tracker is another device on the network, such as a phone.
+; 0 is the least, 1 the most.
+RemoteSmoothing=default
+
+[Position]
+; true: moving your head moves the view.
+; Tracking mode at startup, with RotationEnabled. The mode hotkey changes both.
+PositionEnabled=default
+; How far, in metres, leaning left or right can move the view.
+PositionLimitX=default
+; How far, in metres, raising your head can move the view.
+PositionLimitY=default
+; How far, in metres, lowering your head can move the view.
+PositionLimitYDown=default
+; How far, in metres, leaning forward can move the view.
+PositionLimitZ=default
+; How far, in metres, leaning back can move the view.
+PositionLimitZBack=default
+
+[Hotkeys]
+; Turns head tracking on and off.
+ToggleKey=default
+; Changes the tracking mode: rotation and position, rotation only, position only.
+CycleTrackingModeKey=default
+; Switches yaw between the world's up axis and the camera's own (WorldSpaceYaw).
+YawModeKey=default
+
+[Camera]
+; true: while head tracking is on, SOMA is told its Tobii eye tracker is not
+; tracking, so Extended View and the gaze crosshair do not fight the head pose.
+; Turning head tracking off hands them back.
+SuppressEyeTracking=true
+; Vertical field of view in degrees. SOMA has no setting of its own. 0 leaves
+; the game's own alone. 30 to 120 can be set, and the game's scripted zooms still
+; narrow and widen the view from it.
+FieldOfView=0.0
 ```
+<!-- /cameraunlock:config -->
 
 ### Field of view
 
-SOMA has no field of view slider in its options menu, so `FieldOfView` in the mod's INI is the setting.
+SOMA has no field of view slider in its options menu, so `FieldOfView` under `[Camera]` in `CameraUnlock.ini` is the setting.
 
-The number is the **vertical** field, which is the one SOMA works in: it fixes the vertical field and derives the horizontal one from your aspect ratio, so a wider monitor gets a wider picture rather than a shorter one. The game's own value is 70, so `FieldOfView=85` is a noticeably wider view and `FieldOfView=60` a narrower one. Values below 30 or above 120 are clamped. Leave it at `0` to keep the game's own field.
+The number is the **vertical** field, which is the one SOMA works in: it fixes the vertical field and derives the horizontal one from your aspect ratio, so a wider monitor gets a wider picture rather than a shorter one. The game's own value is 70, so `FieldOfView=85` is a noticeably wider view and `FieldOfView=60` a narrower one. A value other than `0` or a number from 30 to 120 is not read: the log names it and the game's own field is used. Leave it at `0` to keep the game's own field.
 
 The game's scripted zooms still zoom from wherever you set the field, and the crosshair stays on the interaction ray at any setting.
 
@@ -190,7 +233,7 @@ SOMA has eye tracking of its own, and one part of it moves the camera: Extended 
 
 So `SuppressEyeTracking` is on by default. While head tracking is enabled the game is told its eye tracker is not tracking, which is the state every player without one is in - Extended View stops, and so does the rest of what the game's eye tracking drives: the larger gaze crosshair, gaze flashlight control, the reactive environment and reactive AI. Nothing is written to the game's settings or to the device, so it all comes straight back the moment you turn tracking off with `End`, and your options screen is untouched either way.
 
-Set `SuppressEyeTracking=false` to keep SOMA's eye tracking running alongside the mod. If you have no eye tracker, the setting does nothing - the hook is installed but the game never asks.
+Set `SuppressEyeTracking=false` under `[Camera]` in `CameraUnlock.ini` to keep SOMA's eye tracking running alongside the mod. If you have no eye tracker, the setting does nothing - the hook is installed but the game never asks.
 
 ## Troubleshooting
 
@@ -209,7 +252,7 @@ Read `HeadTracking.log`, which the mod writes next to `Soma.exe`. It records whe
 - Check your firewall is not blocking UDP port `4242`.
 - Tracking is suppressed in menus, loading screens, the pause screen and SOMA's in-world monitor renders. Get into gameplay before judging it.
 - If the log says it could not bind the port, it quotes what Windows gave as the reason. Error 10048 is another program listening on `4242`, usually OpenTrack or a game left running - close it and the mod takes the port over within about half a second, no restart needed.
-- Error 10013 there means nothing is holding the port and Windows is refusing it anyway, because `4242` falls inside a range reserved on your PC by Hyper-V, WSL or Docker. `netsh int ipv4 show excludedportrange protocol=udp` lists those ranges; set `UDPPort` in `HeadTracking.ini` to a port outside them and send the tracker there.
+- Error 10013 there means nothing is holding the port and Windows is refusing it anyway, because `4242` falls inside a range reserved on your PC by Hyper-V, WSL or Docker. `netsh int ipv4 show excludedportrange protocol=udp` lists those ranges; set `UdpPort` in `CameraUnlock.ini` to a port outside them and send the tracker there.
 
 **The view swings around on its own**
 
@@ -217,14 +260,14 @@ Read `HeadTracking.log`, which the mod writes next to `Soma.exe`. It records whe
 
 **Jittery or unstable tracking**
 
-- Raise `RemoteSmoothing` in `[Sensitivity]` if the tracker is on another device, or add smoothing in OpenTrack itself.
+- Raise `RemoteSmoothing` in `[Smoothing]` if the tracker is on another device, or add smoothing in OpenTrack itself.
 - Improve your lighting for webcam tracking.
 - Phone tracking over WiFi benefits from routing through OpenTrack's filters rather than sending direct.
 
 **Yaw feels wrong when looking up or down**
 
 - Toggle between world-locked and camera-local yaw with `Page Down` (or `Ctrl+Shift+H`). World-locked is horizon-stable; camera-local follows the camera's current up axis.
-- If the view moves opposite to your head on an axis, set the matching `InvertYaw`, `InvertPitch` or `InvertRoll` in `[Sensitivity]`, or fix the axis in your tracker's own profile.
+- If the view moves opposite to your head on an axis, invert that axis in your tracker's own profile.
 
 **The game window moved when I launched**
 
@@ -232,11 +275,11 @@ Read `HeadTracking.log`, which the mod writes next to `Soma.exe`. It records whe
 
 ## Updating
 
-Download the new release and run `install.cmd` again. Your config is preserved.
+Download the new release and run `install.cmd` again. `CameraUnlock.ini` is kept.
 
 ## Uninstalling
 
-Run `uninstall.cmd`. This removes the mod's files and its two logs. `HeadTracking.ini` is left where it is, because you wrote it - delete it yourself if you want it gone. Ultimate ASI Loader is only removed if the installer put it there; use `uninstall.cmd /force` to remove it anyway.
+Run `uninstall.cmd`. This removes the mod's files and its two logs, and leaves `CameraUnlock.ini`, and `HeadTracking.ini` from earlier versions, in place. Ultimate ASI Loader is only removed if the installer put it there; use `uninstall.cmd /force` to remove it anyway.
 
 ## Building from Source
 

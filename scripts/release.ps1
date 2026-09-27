@@ -91,6 +91,11 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') {
     exit 1
 }
 
+# A version below launcher-manifest.json's canonical_since would ship the canonical
+# config under a version that predates it. Without a manifest there is nothing to hold
+# the version to, and the check returns.
+Assert-ReleaseNotBelowCanonicalSince -RepoRoot $projectRoot -Version $Version
+
 $tagName = "v$Version"
 
 $currentBranch = git -C $projectRoot rev-parse --abbrev-ref HEAD
