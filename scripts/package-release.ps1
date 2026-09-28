@@ -5,7 +5,7 @@
     Package SOMA Head Tracking into its release ZIP.
 .DESCRIPTION
     Produces, in release/:
-      SomaHeadTracking-v<version>-installer.zip  install.cmd + plugins/ + vendor/ + shared/ + docs
+      SomaHeadTracking-v<version>-installer.zip  install.cmd + launcher-manifest.json + plugins/ + vendor/ + shared/ + docs
 
     One ZIP, not two. There is no -nexus.zip stage because there is no Nexus
     route for SOMA: the payload has to sit next to Soma.exe, Vortex has no SOMA
@@ -99,6 +99,9 @@ foreach ($s in @('install.cmd', 'uninstall.cmd')) {
     if (-not (Test-Path (Join-Path $scriptsDir $s))) { throw "Required script not found: scripts/$s" }
 }
 
+$manifestPath = Join-Path $projectRoot 'launcher-manifest.json'
+if (-not (Test-Path $manifestPath)) { throw "launcher-manifest.json not found: $manifestPath" }
+
 # src/version.h is canonical and release.ps1 writes every derived copy in one
 # pass; this is what makes that true rather than intended.
 Assert-ModVersionsInSync -ProjectRoot $projectRoot -Version $version
@@ -165,6 +168,13 @@ foreach ($s in @('install.cmd', 'uninstall.cmd')) {
     Copy-Item (Join-Path $scriptsDir $s) -Destination $ghStaging -Force
     Write-Host "  $s" -ForegroundColor Green
 }
+
+# The launcher deploys natively from launcher-manifest.json at the ZIP root;
+# install.cmd ships beside it for standalone installs.
+$manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+$manifest.mod_info.version = $version
+$manifest | ConvertTo-Json -Depth 10 | Set-Content -Path (Join-Path $ghStaging 'launcher-manifest.json') -Encoding utf8
+Write-Host "  launcher-manifest.json (version $version)" -ForegroundColor Green
 
 $pluginsDir = Join-Path $ghStaging 'plugins'
 New-Item -ItemType Directory -Path $pluginsDir -Force | Out-Null

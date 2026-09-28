@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "mod_info": {
+    "name": "SomaHeadTracking",
+    "version": "0.0.0",
+    "game_id": "soma"
+  },
+  "strategy": "AsiLoader",
+  "delivery_mode": "manifest",
+
+  "config": {
+    "path": "CameraUnlock.ini",
+    "anchor": "game_root",
+    "legacy_source": "HeadTracking.ini",
+    "canonical_since": "0.1.0",
+    "per_game": {}
+  },
+
+  "files": [
+    { "source": "vendor/ultimate-asi-loader/dinput8.dll", "target": "version.dll", "backup": true },
+    { "source": "plugins/SomaHeadTracking.asi", "target": "SomaHeadTracking.asi" }
+  ],
+
+  "runtime_requirements": [],
+  "dependencies": []
+}

@@ -35,8 +35,8 @@ build-release = { cmd = "cmake --build build --config Release", depends-on = ["s
 test = { cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tests.ps1", depends-on = ["build-release"] }
 
 # Rewrite config/CameraUnlock.ini, the committed copy of the CameraUnlock.ini the mod creates at
-# first launch, from the config table after a change to a row, a comment or a default.
-# encode-seed then says there is no launcher-manifest.json to update.
+# first launch, from the config table after a change to a row, a comment or a default, then
+# rewrite the per_game of launcher-manifest.json's config descriptor from it.
 render-config = { cmd = "build/tests/Release/config_tests.exe --render-config config/CameraUnlock.ini && node cameraunlock-core/scripts/encode-seed.mjs", depends-on = ["build-release"] }
 
 # bin/ as well as build/. CMake writes the .asi to ${CMAKE_SOURCE_DIR}/bin,
@@ -61,13 +61,9 @@ package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-rele
 # THIRD-PARTY-NOTICES.md. Offline - reads only what is committed.
 validate-notices = "node cameraunlock-core/scripts/validate-notices.mjs ."
 
-# A stub, and it says so rather than passing quietly: this mod ships no
-# launcher-manifest.json because the launcher does not list it. When one is
-# added, this becomes `node cameraunlock-core/scripts/validate-manifest.mjs
-# release/SomaHeadTracking-v<version>-installer.zip`.
-validate-manifest = { cmd = """
-    powershell -Command "Write-Host 'No launcher-manifest.json in this repo - nothing to validate.' -ForegroundColor Yellow"
-""" }
+# Checks the newest installer ZIP in release/ against core's manifest and config descriptor
+# rules. Run it after `pixi run package`.
+validate-manifest = "node cameraunlock-core/scripts/validate-manifest.mjs"
 
 # Cut a release: pixi run release <major|minor|patch|nightly|X.Y.Z>.
 release = "powershell -ExecutionPolicy Bypass -File scripts/release.ps1"
