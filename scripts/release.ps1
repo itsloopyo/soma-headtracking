@@ -46,28 +46,6 @@ Import-Module (Join-Path $PSScriptRoot 'Version.psm1') -Force
 # stages exactly what Set-ModVersion writes.
 $versionFiles = Get-ModVersionPaths -ProjectRoot $projectRoot
 
-# Mirrors New-ChangelogFromCommits' insertion so a -Force maintenance entry
-# lands in the same place with the same shape.
-function Add-MaintenanceChangelogEntry {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$NewVersion
-    )
-    $date = Get-Date -Format 'yyyy-MM-dd'
-    $entry = "## [$NewVersion] - $date`n`n### Changed`n`n- Maintenance release (no user-facing changes).`n`n"
-    $changelog = Read-TextFileUtf8 -Path $Path
-    $changelog = $changelog -replace '(?s)(# Changelog.*?\n\n)', "`$1$entry"
-    Write-TextFileUtf8 -Path $Path -Text ($changelog.TrimEnd() + "`n")
-}
-
-# Every read and write of CHANGELOG.md below goes through Version.psm1's
-# Read-TextFileUtf8 / Write-TextFileUtf8 pair rather than Get-Content -Raw and
-# Set-Content, which on Windows PowerShell 5.1 both default to the system ANSI
-# codepage. New-ChangelogFromCommits reads and writes the same file as UTF-8, so
-# one commit subject carrying a curly quote or an accented name is enough for a
-# mismatched round trip here to mangle every multi-byte sequence in the whole
-# changelog and commit the result. Move both halves or neither.
-
 Write-Host '=== SOMA Head Tracking Release ===' -ForegroundColor Cyan
 Write-Host ''
 
@@ -92,8 +70,7 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') {
 }
 
 # A version below launcher-manifest.json's canonical_since would ship the canonical
-# config under a version that predates it. Without a manifest there is nothing to hold
-# the version to, and the check returns.
+# config under a version that predates it.
 Assert-ReleaseNotBelowCanonicalSince -RepoRoot $projectRoot -Version $Version
 
 $tagName = "v$Version"
@@ -146,49 +123,16 @@ Write-Host ''
 # tag was noise, so running it before any file is mutated leaves a clean tree on
 # abort instead of a half-applied version bump with no tag.
 Write-Host 'Generating CHANGELOG from commits...' -ForegroundColor Cyan
-if (-not (git -C $projectRoot tag -l 'v*')) {
-    # No tags, so there are no commits-since-the-last-tag to build an entry
-    # from. What there is, before a first release, is a hand-written entry
-    # saying what that release contains. Insert into it, or leave it alone;
-    # never overwrite - an unconditional write here replaced the whole file with
-    # a five-line stub and committed that as the record of the release.
-    #
-    # It is not the GitHub release body. generate-release-notes.ps1 reads
-    # RELEASE_NOTES.md if one exists and otherwise writes "First release." on a
-    # first release; it never reads CHANGELOG.md. This preserves the repo's own
-    # file, which is what ships inside the installer ZIP.
-    $date = Get-Date -Format 'yyyy-MM-dd'
-    if (-not (Test-Path -LiteralPath $changelogPath)) {
-        Write-TextFileUtf8 -Path $changelogPath -Text "# Changelog`n`n## [$Version] - $date`n`nFirst release.`n"
-    } elseif ((Read-TextFileUtf8 -Path $changelogPath) -match ('(?m)^##\s*\[' + [regex]::Escape($Version) + '\]')) {
-        # Keep the body, restamp the date. The entry was written while the work
-        # was being done, so its date is the day someone started typing it, not
-        # the day the release ships.
-        $changelog = (Read-TextFileUtf8 -Path $changelogPath) -replace
-            ('(?m)^(##\s*\[' + [regex]::Escape($Version) + '\])\s*-\s*\d{4}-\d{2}-\d{2}(?=\r?\n)'),
-            "`$1 - $date"
-        Write-TextFileUtf8 -Path $changelogPath -Text ($changelog.TrimEnd() + "`n")
-        Write-Host "CHANGELOG.md already describes [$Version] - keeping it, dated $date." -ForegroundColor Yellow
-    } else {
-        $entry = "## [$Version] - $date`n`nFirst release.`n`n"
-        $changelog = (Read-TextFileUtf8 -Path $changelogPath) -replace '(?s)(# Changelog.*?\n\n)', "`$1$entry"
-        Write-TextFileUtf8 -Path $changelogPath -Text ($changelog.TrimEnd() + "`n")
-    }
-} else {
-    try {
-        New-ChangelogFromCommits `
-            -ChangelogPath $changelogPath `
-            -Version $Version `
-            -ArtifactPaths @('src/', 'CMakeLists.txt', 'cameraunlock-core/', 'scripts/install.cmd', 'scripts/uninstall.cmd')
-    } catch {
-        if (-not $Force) {
-            Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
-            Write-Host 'No user-facing changes to release. Re-run with -Force for a maintenance release.' -ForegroundColor Yellow
-            exit 1
-        }
-        Write-Host 'No user-facing commits since last tag - writing maintenance entry (-Force).' -ForegroundColor Yellow
-        Add-MaintenanceChangelogEntry -Path $changelogPath -NewVersion $Version
-    }
+try {
+    New-ChangelogFromCommits `
+        -ChangelogPath $changelogPath `
+        -Version $Version `
+        -ArtifactPaths @('src/', 'CMakeLists.txt', 'cameraunlock-core/', 'scripts/install.cmd', 'scripts/uninstall.cmd') `
+        -Maintenance:$Force
+} catch {
+    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host 'No user-facing changes to release. Re-run with -Force for a maintenance release.' -ForegroundColor Yellow
+    exit 1
 }
 
 Write-Host "Updating version to $Version..." -ForegroundColor Cyan
