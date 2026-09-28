@@ -32,7 +32,9 @@ build-release = { cmd = "cmake --build build --config Release", depends-on = ["s
 #
 # Release, not Debug, for two reasons: it is the configuration that ships, and
 # `package` already builds it, so CI compiles once rather than twice.
-test = { cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tests.ps1", depends-on = ["build-release"] }
+test-unit = { cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tests.ps1 -Suite unit", depends-on = ["build-release"] }
+test-differential = { cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tests.ps1 -Suite differential", depends-on = ["build-release"] }
+test = { depends-on = ["test-unit", "test-differential"] }
 
 # Rewrite config/CameraUnlock.ini, the committed copy of the CameraUnlock.ini the mod creates at
 # first launch, from the config table after a change to a row, a comment or a default, then
@@ -55,7 +57,7 @@ clean-all = { cmd = """
 update-deps = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/update-deps.ps1" }
 
 # Package release ZIP.
-package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build-release", "test"] }
+package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build-release", "test-unit"] }
 
 # Every substantive line of each shipped dependency's licence must appear in
 # THIRD-PARTY-NOTICES.md. Offline - reads only what is committed.
